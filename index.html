@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta
+      name="description"
+      content="Organize suas campanhas, acompanhe sessões e encontre sua próxima mesa de RPG."
+    >
+    <meta name="theme-color" content="#11120f">
+    <title>Mesa RPG — sua próxima aventura começa aqui</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#conteudo">Pular para o conteúdo</a>
+
+    <header class="site-header">
+      <a class="brand" href="#inicio" aria-label="Mesa RPG, início">
+        <span class="brand-mark" aria-hidden="true">M</span>
+        <span>Mesa<span class="brand-accent">RPG</span></span>
+      </a>
+
+      <button
+        class="menu-toggle"
+        type="button"
+        aria-expanded="false"
+        aria-controls="site-nav"
+      >
+        <span class="sr-only">Abrir menu</span>
+        <span aria-hidden="true"></span>
+        <span aria-hidden="true"></span>
+      </button>
+
+      <nav class="site-nav" id="site-nav" aria-label="Navegação principal">
+        <a href="#mesas">Explorar mesas</a>
+        <a href="#campanhas">Minhas campanhas</a>
+        <a href="#como-funciona">Como funciona</a>
+        <a class="button button-small button-outline" href="#campanhas">Entrar</a>
+      </nav>
+    </header>
+
+    <main id="conteudo">
+      <section class="hero section-wrap" id="inicio">
+        <div class="hero-copy">
+          <p class="eyebrow"><span class="status-dot"></span> Sua próxima aventura começa aqui</p>
+          <h1>Reúna o grupo.<br><span>Viva a história.</span></h1>
+          <p class="hero-description">
+            Organize suas campanhas, acompanhe cada sessão e encontre pessoas
+            para jogar. A aventura é melhor quando todo mundo está na mesma mesa.
+          </p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="#mesas">Encontrar uma mesa <span aria-hidden="true">↗</span></a>
+            <a class="text-link" href="#campanhas">Conhecer o espaço <span aria-hidden="true">↓</span></a>
+          </div>
+          <div class="hero-systems" aria-label="Sistemas previstos">
+            <span>Feito para jogar</span>
+            <span class="system-pill">D&amp;D</span>
+            <span class="system-pill">Tormenta</span>
+            <span class="system-pill">Ordem Paranormal</span>
+          </div>
+        </div>
+
+        <div class="hero-art" aria-label="Ilustração decorativa de uma aventura">
+          <div class="orbit orbit-one"></div>
+          <div class="orbit orbit-two"></div>
+          <div class="dice" aria-hidden="true"><span>20</span></div>
+          <div class="hero-note note-top"><span class="note-icon">✦</span> Uma história começa...</div>
+          <div class="hero-note note-bottom"><span class="note-avatar">M</span> A mesa está esperando</div>
+          <span class="spark spark-one" aria-hidden="true">✦</span>
+          <span class="spark spark-two" aria-hidden="true">✧</span>
+        </div>
+      </section>
+
+      <section class="section-wrap tables-section" id="mesas">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Encontre seu grupo</p>
+            <h2>Mesas procurando <span>aventureiros</span></h2>
+          </div>
+          <a class="text-link desktop-link" href="#mesas">Ver todas <span aria-hidden="true">→</span></a>
+        </div>
+
+        <div class="table-toolbar">
+          <p>Tem uma vaga para você. Qual vai ser sua próxima história?</p>
+          <div class="filters">
+            <label class="sr-only" for="system-filter">Filtrar por sistema</label>
+            <select id="system-filter">
+              <option value="todos">Todos os sistemas</option>
+              <option value="dnd">D&amp;D</option>
+              <option value="tormenta">Tormenta</option>
+              <option value="ordem">Ordem Paranormal</option>
+            </select>
+            <label class="search-field">
+              <span class="sr-only">Buscar mesa</span>
+              <span aria-hidden="true">⌕</span>
+              <input id="table-search" type="search" placeholder="Buscar mesa">
+            </label>
+          </div>
+        </div>
+
+        <div class="table-grid" id="table-list">
+          <article class="table-card" data-system="dnd" data-search="ecos do reino antigo d&d fantasia exploração">
+            <div class="card-topline">
+              <span class="system-label system-dnd">D&amp;D 5e</span>
+              <span class="open-label"><span class="status-dot"></span> Inscrições abertas</span>
+            </div>
+            <h3>Ecos do Reino Antigo</h3>
+            <p class="card-description">Uma expedição por ruínas esquecidas pode mudar o destino de todo o reino.</p>
+            <div class="table-meta">
+              <span><span aria-hidden="true">◷</span> Sábados, 19h</span>
+              <span><span aria-hidden="true">♙</span> 2 vagas</span>
+            </div>
+            <div class="card-footer">
+              <div class="gm"><span class="avatar avatar-green">L</span><span><small>Mestre</small>Lua Monteiro</span></div>
+              <a class="card-link" href="#campanhas" aria-label="Ver mesa Ecos do Reino Antigo">↗</a>
+            </div>
+          </article>
+
+          <article class="table-card" data-system="tormenta" data-search="tormenta coração de arton aventura fantasia">
+            <div class="card-topline">
+              <span class="system-label system-tormenta">Tormenta20</span>
+              <span class="open-label"><span class="status-dot"></span> Inscrições abertas</span>
+            </div>
+            <h3>Coração de Arton</h3>
+            <p class="card-description">Heróis improváveis, escolhas difíceis e uma ameaça que cresce a cada dia.</p>
+            <div class="table-meta">
+              <span><span aria-hidden="true">◷</span> Domingos, 15h</span>
+              <span><span aria-hidden="true">♙</span> 1 vaga</span>
+            </div>
+            <div class="card-footer">
+              <div class="gm"><span class="avatar avatar-purple">R</span><span><small>Mestre</small>Rafael Nunes</span></div>
+              <a class="card-link" href="#campanhas" aria-label="Ver mesa Coração de Arton">↗</a>
+            </div>
+          </article>
+
+          <article class="table-card" data-system="ordem" data-search="ordem paranormal arquivos da meia-noite investigação mistério">
+            <div class="card-topline">
+              <span class="system-label system-ordem">Ordem Paranormal</span>
+              <span class="open-label"><span class="status-dot"></span> Inscrições abertas</span>
+            </div>
+            <h3>Arquivos da Meia-noite</h3>
+            <p class="card-description">Um chamado sem resposta. Uma cidade que não aparece em nenhum mapa.</p>
+            <div class="table-meta">
+              <span><span aria-hidden="true">◷</span> Sextas, 20h</span>
+              <span><span aria-hidden="true">♙</span> 3 vagas</span>
+            </div>
+            <div class="card-footer">
+              <div class="gm"><span class="avatar avatar-orange">B</span><span><small>Mestre</small>Bianca Alves</span></div>
+              <a class="card-link" href="#campanhas" aria-label="Ver mesa Arquivos da Meia-noite">↗</a>
+            </div>
+          </article>
+        </div>
+        <p class="empty-state" id="empty-state" hidden>Nenhuma mesa encontrada. Tente outro sistema ou termo.</p>
+        <p class="prototype-note">Mesas e perfis ilustrativos — inscrições ainda não estão habilitadas.</p>
+      </section>
+
+      <section class="feature-band" id="como-funciona">
+        <div class="section-wrap feature-content">
+          <div class="feature-intro">
+            <p class="eyebrow">Tudo no mesmo lugar</p>
+            <h2>Mais tempo vivendo a aventura.<br><span>Menos tempo procurando anotações.</span></h2>
+          </div>
+          <div class="feature-list">
+            <article class="feature-item">
+              <span class="feature-icon" aria-hidden="true">▤</span>
+              <div><h3>Suas campanhas organizadas</h3><p>Personagens, grupo e sessões reunidos em um só espaço.</p></div>
+            </article>
+            <article class="feature-item">
+              <span class="feature-icon" aria-hidden="true">↗</span>
+              <div><h3>A história não se perde</h3><p>Uma linha do tempo acompanha as mudanças registradas na sessão.</p></div>
+            </article>
+            <article class="feature-item">
+              <span class="feature-icon" aria-hidden="true">✦</span>
+              <div><h3>Uma mesa para cada pessoa</h3><p>Descubra grupos novos e encontre jogadores para sua aventura.</p></div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section-wrap campaign-section" id="campanhas">
+        <div class="campaign-card">
+          <div>
+            <p class="eyebrow">Seu próximo capítulo</p>
+            <h2>O próximo mundo pode ser <span>o seu.</span></h2>
+            <p>Crie uma campanha, reúna seus amigos e deixe cada sessão fazer parte da história.</p>
+          </div>
+          <a class="button button-primary" href="#inicio">Começar uma campanha <span aria-hidden="true">↗</span></a>
+        </div>
+        <p class="prototype-note">Este protótipo ainda não cria contas, campanhas ou fichas.</p>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <a class="brand" href="#inicio">
+        <span class="brand-mark" aria-hidden="true">M</span>
+        <span>Mesa<span class="brand-accent">RPG</span></span>
+      </a>
+      <p>Feito para quem acredita que toda grande história começa ao redor de uma mesa.</p>
+      <span class="footer-copy">Protótipo inicial · 2026</span>
+    </footer>
+  </body>
+</html>
