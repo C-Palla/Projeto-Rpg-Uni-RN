@@ -33,14 +33,22 @@
       </button>
 
       <nav class="site-nav" id="site-nav" aria-label="Navegação principal">
-        <a href="#mesas">Explorar mesas</a>
-        <a href="#campanhas">Minhas campanhas</a>
-        <a href="#como-funciona">Como funciona</a>
-        <a class="button button-small button-outline" href="#campanhas">Entrar</a>
+        <a href="#inicio">Início</a>
+        <a href="#mesas-publicas">Explorar mesas</a>
+        <a href="#painel">Meu painel</a>
+        <a href="#minhas-campanhas">Campanhas</a>
+        <div class="nav-auth">
+          <button id="login-trigger" class="button button-small button-outline" type="button">Entrar</button>
+          <div id="user-pill" class="user-pill hidden" aria-live="polite">
+            <span id="current-user-avatar" class="user-avatar" aria-hidden="true">M</span>
+            <span id="current-user-name">Mestre</span>
+          </div>
+        </div>
       </nav>
     </header>
 
     <main id="conteudo">
+      <div id="home-view">
       <section class="hero section-wrap" id="inicio">
         <div class="hero-copy">
           <p class="eyebrow"><span class="status-dot"></span> Sua próxima aventura começa aqui</p>
@@ -100,59 +108,10 @@
         </div>
 
         <div class="table-grid" id="table-list">
-          <article class="table-card" data-system="dnd" data-search="ecos do reino antigo d&d fantasia exploração">
-            <div class="card-topline">
-              <span class="system-label system-dnd">D&amp;D 5e</span>
-              <span class="open-label"><span class="status-dot"></span> Inscrições abertas</span>
-            </div>
-            <h3>Ecos do Reino Antigo</h3>
-            <p class="card-description">Uma expedição por ruínas esquecidas pode mudar o destino de todo o reino.</p>
-            <div class="table-meta">
-              <span><span aria-hidden="true">◷</span> Sábados, 19h</span>
-              <span><span aria-hidden="true">♙</span> 2 vagas</span>
-            </div>
-            <div class="card-footer">
-              <div class="gm"><span class="avatar avatar-green">L</span><span><small>Mestre</small>Lua Monteiro</span></div>
-              <a class="card-link" href="#campanhas" aria-label="Ver mesa Ecos do Reino Antigo">↗</a>
-            </div>
-          </article>
-
-          <article class="table-card" data-system="tormenta" data-search="tormenta coração de arton aventura fantasia">
-            <div class="card-topline">
-              <span class="system-label system-tormenta">Tormenta20</span>
-              <span class="open-label"><span class="status-dot"></span> Inscrições abertas</span>
-            </div>
-            <h3>Coração de Arton</h3>
-            <p class="card-description">Heróis improváveis, escolhas difíceis e uma ameaça que cresce a cada dia.</p>
-            <div class="table-meta">
-              <span><span aria-hidden="true">◷</span> Domingos, 15h</span>
-              <span><span aria-hidden="true">♙</span> 1 vaga</span>
-            </div>
-            <div class="card-footer">
-              <div class="gm"><span class="avatar avatar-purple">R</span><span><small>Mestre</small>Rafael Nunes</span></div>
-              <a class="card-link" href="#campanhas" aria-label="Ver mesa Coração de Arton">↗</a>
-            </div>
-          </article>
-
-          <article class="table-card" data-system="ordem" data-search="ordem paranormal arquivos da meia-noite investigação mistério">
-            <div class="card-topline">
-              <span class="system-label system-ordem">Ordem Paranormal</span>
-              <span class="open-label"><span class="status-dot"></span> Inscrições abertas</span>
-            </div>
-            <h3>Arquivos da Meia-noite</h3>
-            <p class="card-description">Um chamado sem resposta. Uma cidade que não aparece em nenhum mapa.</p>
-            <div class="table-meta">
-              <span><span aria-hidden="true">◷</span> Sextas, 20h</span>
-              <span><span aria-hidden="true">♙</span> 3 vagas</span>
-            </div>
-            <div class="card-footer">
-              <div class="gm"><span class="avatar avatar-orange">B</span><span><small>Mestre</small>Bianca Alves</span></div>
-              <a class="card-link" href="#campanhas" aria-label="Ver mesa Arquivos da Meia-noite">↗</a>
-            </div>
-          </article>
+          <p class="empty-state">Carregando mesas públicas…</p>
         </div>
         <p class="empty-state" id="empty-state" hidden>Nenhuma mesa encontrada. Tente outro sistema ou termo.</p>
-        <p class="prototype-note">Mesas e perfis ilustrativos — inscrições ainda não estão habilitadas.</p>
+        <p class="prototype-note">Mesas públicas carregadas do backend. Consulte os detalhes para ver requisitos e solicitar uma vaga.</p>
       </section>
 
       <section class="feature-band" id="como-funciona">
@@ -185,11 +144,62 @@
             <h2>O próximo mundo pode ser <span>o seu.</span></h2>
             <p>Crie uma campanha, reúna seus amigos e deixe cada sessão fazer parte da história.</p>
           </div>
-          <a class="button button-primary" href="#inicio">Começar uma campanha <span aria-hidden="true">↗</span></a>
+          <button class="button button-primary auth-open-button" type="button" data-auth-open="true">
+            Começar uma campanha <span aria-hidden="true">↗</span>
+          </button>
         </div>
-        <p class="prototype-note">Este protótipo ainda não cria contas, campanhas ou fichas.</p>
+        <p class="prototype-note">O MVP utiliza uma API e um banco de dados SQLite locais.</p>
       </section>
+
+      </div>
+      <div id="app-page" class="app-page hidden"></div>
     </main>
+
+    <div id="auth-modal" class="auth-modal hidden" aria-hidden="true">
+      <div class="auth-dialog" role="dialog" aria-modal="true" aria-labelledby="auth-title">
+        <button id="auth-close" class="auth-close" type="button" aria-label="Fechar modal de login">×</button>
+        <div class="auth-header">
+          <p class="eyebrow">Acesso ao espaço</p>
+          <h2 id="auth-title">Entre na sua mesa</h2>
+        </div>
+
+        <div class="auth-tabs" role="tablist" aria-label="Mecanismo de autenticação">
+          <button class="auth-tab is-active" type="button" role="tab" aria-selected="true" data-auth-view="login">Entrar</button>
+          <button class="auth-tab" type="button" role="tab" aria-selected="false" data-auth-view="signup">Criar conta</button>
+        </div>
+
+        <form id="login-form" class="auth-form" novalidate>
+          <label>
+            <span>Email</span>
+            <input type="email" id="login-email" name="email" autocomplete="email" placeholder="seu@email.com" required>
+          </label>
+          <label>
+            <span>Senha</span>
+            <input type="password" id="login-password" name="password" autocomplete="current-password" placeholder="Sua senha" required>
+          </label>
+          <button class="button button-primary auth-submit" type="submit">Entrar</button>
+          <p class="auth-helper">Sua conta será salva no servidor deste projeto. Use uma senha com pelo menos 10 caracteres.</p>
+          <p id="login-message" class="auth-message" role="alert" aria-live="polite"></p>
+        </form>
+
+        <form id="signup-form" class="auth-form hidden" novalidate>
+          <label>
+            <span>Nome de exibição</span>
+            <input type="text" id="signup-name" name="name" autocomplete="name" placeholder="Seu nome" required>
+          </label>
+          <label>
+            <span>Email</span>
+            <input type="email" id="signup-email" name="email" autocomplete="email" placeholder="seu@email.com" required>
+          </label>
+          <label>
+            <span>Senha</span>
+            <input type="password" id="signup-password" name="password" autocomplete="new-password" placeholder="Crie uma senha" required>
+          </label>
+          <button class="button button-primary auth-submit" type="submit">Criar conta</button>
+          <p id="signup-message" class="auth-message" role="alert" aria-live="polite"></p>
+        </form>
+      </div>
+    </div>
 
     <footer class="site-footer">
       <a class="brand" href="#inicio">
@@ -197,7 +207,7 @@
         <span>Mesa<span class="brand-accent">RPG</span></span>
       </a>
       <p>Feito para quem acredita que toda grande história começa ao redor de uma mesa.</p>
-      <span class="footer-copy">Protótipo inicial · 2026</span>
+      <span class="footer-copy">MVP · API local · 2026</span>
     </footer>
   </body>
 </html>
