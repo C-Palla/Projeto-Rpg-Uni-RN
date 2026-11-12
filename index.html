@@ -10,6 +10,8 @@
     <meta name="theme-color" content="#11120f">
     <title>Mesa RPG — sua próxima aventura começa aqui</title>
     <link rel="stylesheet" href="styles.css">
+    <script src="/supabase-config.js" defer></script>
+    <script src="/vendor/supabase.js" defer></script>
     <script src="app.js" defer></script>
   </head>
   <body>
@@ -148,7 +150,7 @@
             Começar uma campanha <span aria-hidden="true">↗</span>
           </button>
         </div>
-        <p class="prototype-note">O MVP utiliza uma API e um banco de dados SQLite locais.</p>
+        <p class="prototype-note">O MVP utiliza o Supabase para autenticação e armazenamento dos dados.</p>
       </section>
 
       </div>
@@ -207,7 +209,7 @@
         <span>Mesa<span class="brand-accent">RPG</span></span>
       </a>
       <p>Feito para quem acredita que toda grande história começa ao redor de uma mesa.</p>
-      <span class="footer-copy">MVP · API local · 2026</span>
+      <span class="footer-copy">MVP · Supabase · 2026</span>
     </footer>
   </body>
 </html>

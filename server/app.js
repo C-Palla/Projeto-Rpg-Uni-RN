@@ -4,6 +4,9 @@ const express = require("express");
 const database = require("./db");
 
 const app = express();
+const supabaseUrl = process.env.SUPABASE_URL || "";
+const supabasePublishableKey = process.env.SUPABASE_PUBLISHABLE_KEY || "";
+const supabaseOrigin = supabaseUrl ? new URL(supabaseUrl).origin : "";
 const sessionTtlDays = Math.min(Math.max(Number(process.env.SESSION_TTL_DAYS || 7), 1), 30);
 const cookieName = "mesa_session";
 const secureCookie = process.env.COOKIE_SECURE === "true" || process.env.NODE_ENV === "production";
@@ -19,7 +22,7 @@ app.use((request, response, next) => {
     "Referrer-Policy": "strict-origin-when-cross-origin",
     "X-Frame-Options": "DENY",
     "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
-    "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+    "Content-Security-Policy": `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' ${supabaseOrigin}; base-uri 'self'; form-action 'self'; frame-ancestors 'none'`
   });
   next();
 });
@@ -406,6 +409,16 @@ app.use((request, response, next) => {
 
 app.get("/api/health", (request, response) => response.json({ status: "ok" }));
 app.get("/api/bootstrap", (request, response) => response.json(loadBootstrap(request.user)));
+app.get("/supabase-config.js", (request, response) => {
+  response.set({
+    "Cache-Control": "no-store",
+    "Content-Type": "text/javascript; charset=utf-8"
+  });
+  response.send(`window.MESA_SUPABASE_CONFIG = ${JSON.stringify({
+    url: supabaseUrl,
+    publishableKey: supabasePublishableKey
+  })};`);
+});
 
 app.post("/api/auth/register", asyncRoute((request, response) => {
   const name = bodyString(request.body, "name", 1, 80);
@@ -700,6 +713,11 @@ const frontendFiles = express.static(path.join(__dirname, ".."), {
 });
 app.get(["/", "/index.html", "/app.js", "/styles.css"], (request, response, next) => {
   frontendFiles(request, response, next);
+});
+app.get("/vendor/supabase.js", (request, response, next) => {
+  response.sendFile(path.join(__dirname, "..", "node_modules", "@supabase", "supabase-js", "dist", "umd", "supabase.js"), (error) => {
+    if (error) next(error);
+  });
 });
 
 app.use((request, response, next) => {

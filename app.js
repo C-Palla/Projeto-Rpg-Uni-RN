@@ -21,6 +21,10 @@ const appPage = document.querySelector("#app-page");
 let activeUser = null;
 let data = { campaigns: [], characters: [], sessions: [], tables: [] };
 let bootstrapError = "";
+const supabaseConfig = window.MESA_SUPABASE_CONFIG || {};
+const supabaseClient = supabaseConfig.url && supabaseConfig.publishableKey && window.supabase?.createClient
+  ? window.supabase.createClient(supabaseConfig.url, supabaseConfig.publishableKey)
+  : null;
 const systems = {
   dnd: { name: "D&D 5e", resource: "Espaços de magia", extra: "Classe" },
   tormenta: { name: "Tormenta20", resource: "PM", extra: "Raça" },
@@ -31,34 +35,323 @@ function currentUser() {
   return activeUser;
 }
 
-async function apiRequest(path, options = {}) {
-  const response = await fetch(`/api${path}`, {
-    ...options,
-    credentials: "same-origin",
-    headers: {
-      ...(options.body ? { "Content-Type": "application/json" } : {}),
-      ...options.headers
-    }
-  });
-  if (response.status === 204) return null;
-  const result = await response.json();
-  if (!response.ok) {
-    const error = new Error(result.error?.message || "A solicitação não foi concluída.");
-    error.status = response.status;
-    error.code = result.error?.code;
-    throw error;
+function supabaseFailure(error, fallback) {
+  if (!error) return;
+  const friendlyMessages = {
+    "Invalid login credentials": "Email ou senha inválidos.",
+    user_not_found: "Crie uma conta para este email antes de adicioná-lo.",
+    campaign_not_available: "Campanha não encontrada ou sem permissão para alterá-la.",
+    table_full: "Não há vagas disponíveis nesta mesa.",
+    application_already_decided: "Esta inscrição já foi decidida."
+  };
+  throw new Error(friendlyMessages[error.message] || error.message || fallback);
+}
+
+function requireSupabase() {
+  if (!supabaseClient) {
+    throw new Error("Configure a Project URL e a publishable key do Supabase no arquivo .env e reinicie o servidor.");
   }
-  return result;
+  return supabaseClient;
+}
+
+async function supabaseRows(query, fallback) {
+  const { data: rows, error } = await query;
+  supabaseFailure(error, fallback);
+  return rows || [];
+}
+
+async function apiRequest(path, options = {}) {
+  const client = requireSupabase();
+  const method = options.method || "GET";
+  const body = options.body ? JSON.parse(options.body) : {};
+
+  if (path === "/auth/login" && method === "POST") {
+    const { data: result, error } = await client.auth.signInWithPassword(body);
+    supabaseFailure(error, "Não foi possível entrar.");
+    return result;
+  }
+  if (path === "/auth/register" && method === "POST") {
+    const { data: result, error } = await client.auth.signUp({
+      email: body.email,
+      password: body.password,
+      options: { data: { display_name: body.name } }
+    });
+    supabaseFailure(error, "Não foi possível criar a conta.");
+    return result;
+  }
+  if (path === "/auth/logout" && method === "POST") {
+    const { error } = await client.auth.signOut();
+    supabaseFailure(error, "Não foi possível sair da conta.");
+    return null;
+  }
+  const { data: verifiedUser, error: userError } = await client.auth.getUser();
+  supabaseFailure(userError, "Sua sessão expirou. Entre novamente.");
+  const user = verifiedUser.user;
+  if (!user) throw new Error("Entre na sua conta para continuar.");
+
+  if (path === "/campaigns" && method === "POST") {
+    const { data: campaignId, error } = await client.rpc("create_campaign", {
+      campaign_name: body.name,
+      campaign_system: body.system,
+      campaign_description: body.description
+    });
+    supabaseFailure(error, "Não foi possível criar a campanha.");
+    return { campaign: { id: campaignId } };
+  }
+  const inviteMatch = path.match(/^\/campaigns\/([^/]+)\/members$/);
+  if (inviteMatch && method === "POST") {
+    const { error } = await client.rpc("invite_campaign_member", {
+      target_campaign: inviteMatch[1],
+      invited_email: body.email
+    });
+    supabaseFailure(error, "Não foi possível adicionar esse participante.");
+    return null;
+  }
+  const characterMatch = path.match(/^\/characters(?:\/([^/]+))?$/);
+  if (characterMatch && ["POST", "PATCH"].includes(method)) {
+    const values = {
+      owner_id: user.id,
+      campaign_id: body.campaignId || null,
+      name: body.name,
+      system: body.system,
+      fields: body.fields,
+      notes: body.notes
+    };
+    const query = characterMatch[1]
+      ? client.from("characters").update(values).eq("id", characterMatch[1])
+      : client.from("characters").insert(values);
+    const { data: character, error } = await query.select().single();
+    supabaseFailure(error, "Não foi possível salvar a ficha.");
+    return { character };
+  }
+  const startSessionMatch = path.match(/^\/campaigns\/([^/]+)\/sessions$/);
+  if (startSessionMatch && method === "POST") {
+    const { data: session, error } = await client.from("game_sessions").insert({
+      campaign_id: startSessionMatch[1],
+      status: "active"
+    }).select().single();
+    supabaseFailure(error, "Não foi possível iniciar a sessão.");
+    return { session };
+  }
+  const eventMatch = path.match(/^\/sessions\/([^/]+)\/events$/);
+  if (eventMatch && method === "POST") {
+    const { data: event, error } = await client.rpc("record_character_event", {
+      target_session: eventMatch[1],
+      target_character: body.characterId,
+      target_field: body.field,
+      new_value: body.after
+    });
+    supabaseFailure(error, "Não foi possível registrar a alteração.");
+    return { event };
+  }
+  const finishMatch = path.match(/^\/sessions\/([^/]+)\/finish$/);
+  if (finishMatch && method === "POST") {
+    const { data: session, error } = await client.from("game_sessions").update({
+      status: "finished",
+      ended_at: new Date().toISOString(),
+      master_summary: body.summary
+    }).eq("id", finishMatch[1]).eq("status", "active").select().single();
+    supabaseFailure(error, "Não foi possível finalizar a sessão.");
+    return { session };
+  }
+  if (path === "/tables" && method === "POST") {
+    const { data: table, error } = await client.from("public_tables").insert({
+      owner_id: user.id,
+      title: body.title,
+      system: body.system,
+      description: body.description,
+      schedule: body.schedule,
+      starts_at: body.startsAt,
+      timezone: body.timezone,
+      seats: body.seats,
+      requirements: body.requirements
+    }).select().single();
+    supabaseFailure(error, "Não foi possível publicar a mesa.");
+    return { table };
+  }
+  const applicationMatch = path.match(/^\/tables\/([^/]+)\/applications$/);
+  if (applicationMatch && method === "POST") {
+    const { error } = await client.from("table_applications").insert({
+      table_id: applicationMatch[1],
+      user_id: user.id,
+      message: body.message
+    });
+    supabaseFailure(error, "Não foi possível solicitar uma vaga.");
+    return null;
+  }
+  const decisionMatch = path.match(/^\/applications\/([^/]+)$/);
+  if (decisionMatch && method === "PATCH") {
+    const { error } = await client.rpc("decide_table_application", {
+      target_application: decisionMatch[1],
+      decision: body.status
+    });
+    supabaseFailure(error, "Não foi possível atualizar a inscrição.");
+    return null;
+  }
+  const messageMatch = path.match(/^\/tables\/([^/]+)\/messages$/);
+  if (messageMatch && method === "POST") {
+    const table = data.tables.find((entry) => entry.id === messageMatch[1]);
+    if (!table) throw new Error("Mesa não encontrada.");
+    const applicantId = table.owner === user.id ? body.applicantId : user.id;
+    if (!applicantId) throw new Error("Selecione uma conversa para responder.");
+    const { error } = await client.from("table_messages").insert({
+      table_id: messageMatch[1],
+      sender_id: user.id,
+      applicant_id: applicantId,
+      body: body.text
+    });
+    supabaseFailure(error, "Não foi possível enviar a mensagem.");
+    return null;
+  }
+  const closeTableMatch = path.match(/^\/tables\/([^/]+)\/status$/);
+  if (closeTableMatch && method === "PATCH" && body.status === "closed") {
+    const { error } = await client.from("public_tables").update({ status: "closed" })
+      .eq("id", closeTableMatch[1]);
+    supabaseFailure(error, "Não foi possível encerrar as inscrições.");
+    return null;
+  }
+  throw new Error("Operação não suportada pela integração Supabase.");
 }
 
 async function refreshBootstrap() {
-  const result = await apiRequest("/bootstrap");
-  activeUser = result.user;
+  const client = requireSupabase();
+  const { data: sessionResult, error: sessionError } = await client.auth.getSession();
+  supabaseFailure(sessionError, "Não foi possível verificar a sessão.");
+  const authUser = sessionResult.session?.user || null;
+  const userId = authUser?.id;
+
+  const tableQuery = client.from("public_tables").select("*").order("created_at", { ascending: false });
+  const [
+    campaignRows,
+    membershipRows,
+    characterRows,
+    sessionRows,
+    eventRows,
+    tableRows,
+    applicationRows,
+    messageRows,
+    profileRows
+  ] = await Promise.all([
+    userId ? supabaseRows(client.from("campaigns").select("*").order("created_at", { ascending: false }), "Não foi possível carregar as campanhas.") : [],
+    userId ? supabaseRows(client.from("campaign_members").select("*"), "Não foi possível carregar os participantes.") : [],
+    userId ? supabaseRows(client.from("characters").select("*").order("created_at", { ascending: false }), "Não foi possível carregar as fichas.") : [],
+    userId ? supabaseRows(client.from("game_sessions").select("*").order("started_at", { ascending: false }), "Não foi possível carregar as sessões.") : [],
+    userId ? supabaseRows(client.from("session_events").select("*").order("created_at"), "Não foi possível carregar o histórico.") : [],
+    supabaseRows(tableQuery, "Não foi possível carregar as mesas públicas."),
+    userId ? supabaseRows(client.from("table_applications").select("*").order("created_at"), "Não foi possível carregar as inscrições.") : [],
+    userId ? supabaseRows(client.from("table_messages").select("*").order("created_at"), "Não foi possível carregar as conversas.") : [],
+    userId ? supabaseRows(client.from("profiles").select("id,display_name"), "Não foi possível carregar os perfis.") : []
+  ]);
+  const profiles = new Map(profileRows.map((profile) => [profile.id, profile.display_name]));
+  const eventCharacterIds = new Set(eventRows.map((event) => event.character_id));
+  const characterNames = new Map(characterRows
+    .filter((character) => eventCharacterIds.has(character.id))
+    .map((character) => [character.id, character.name]));
+
+  activeUser = authUser ? {
+    id: authUser.id,
+    name: profiles.get(authUser.id) || authUser.user_metadata?.display_name || authUser.email,
+    email: authUser.email || ""
+  } : null;
+  const campaignIds = new Set(campaignRows.map((campaign) => campaign.id));
   data = {
-    campaigns: result.campaigns,
-    characters: result.characters,
-    sessions: result.sessions,
-    tables: result.tables
+    campaigns: campaignRows.map((campaign) => {
+      const members = membershipRows.filter((member) => member.campaign_id === campaign.id)
+        .map((member) => ({
+          id: member.user_id,
+          name: profiles.get(member.user_id) || "Aventureiro",
+          email: member.user_id === userId ? authUser.email || "" : "",
+          role: member.role
+        }));
+      return {
+        id: campaign.id,
+        owner: campaign.owner_id,
+        name: campaign.name,
+        system: campaign.system,
+        description: campaign.description,
+        participants: members.map((member) => member.id),
+        members,
+        createdAt: campaign.created_at,
+        isMaster: campaign.owner_id === userId
+      };
+    }),
+    characters: characterRows.map((character) => ({
+      id: character.id,
+      owner: character.owner_id,
+      campaignId: character.campaign_id,
+      name: character.name,
+      system: character.system,
+      fields: character.fields,
+      notes: character.notes,
+      createdAt: character.created_at,
+      updatedAt: character.updated_at
+    })),
+    sessions: sessionRows.filter((session) => campaignIds.has(session.campaign_id)).map((session) => ({
+      id: session.id,
+      campaignId: session.campaign_id,
+      status: session.status,
+      startedAt: session.started_at,
+      endedAt: session.ended_at,
+      masterSummary: session.master_summary,
+      events: eventRows.filter((event) => event.session_id === session.id).map((event) => ({
+        id: event.id,
+        characterId: event.character_id,
+        characterName: characterNames.get(event.character_id) || "Personagem",
+        author: profiles.get(event.author_id) || "Aventureiro",
+        field: event.field_name,
+        before: event.value_before,
+        after: event.value_after,
+        createdAt: event.created_at
+      }))
+    })),
+    tables: await Promise.all(tableRows.map(async (table) => {
+      const tableApplications = applicationRows.filter((application) => application.table_id === table.id);
+      const { data: count, error } = await client.rpc("accepted_application_count", { target_table: table.id });
+      supabaseFailure(error, "Não foi possível carregar a quantidade de vagas.");
+      return {
+        id: table.id,
+        title: table.title,
+        system: table.system,
+        description: table.description,
+        schedule: table.schedule,
+        startsAt: table.starts_at,
+        timezone: table.timezone,
+        seats: table.seats,
+        requirements: table.requirements,
+        owner: table.owner_id,
+        masterName: profiles.get(table.owner_id) || "Mestre",
+        status: table.status,
+        acceptedCount: Number(count || 0),
+        availableSeats: Math.max(0, table.seats - Number(count || 0)),
+        applications: table.owner_id === userId ? tableApplications.map((application) => ({
+          id: application.id,
+          userName: profiles.get(application.user_id) || "Aventureiro",
+          userId: application.user_id,
+          tableTitle: table.title,
+          message: application.message,
+          status: application.status,
+          createdAt: application.created_at,
+          decidedAt: application.decided_at
+        })) : [],
+        myApplication: tableApplications.find((application) => application.user_id === userId) ? (() => {
+          const application = tableApplications.find((entry) => entry.user_id === userId);
+          return {
+            id: application.id,
+            status: application.status,
+            message: application.message,
+            createdAt: application.created_at
+          };
+        })() : null,
+        messages: messageRows.filter((message) => message.table_id === table.id).map((message) => ({
+          id: message.id,
+          from: message.sender_id,
+          fromName: profiles.get(message.sender_id) || "Aventureiro",
+          applicantId: message.applicant_id,
+          text: message.body,
+          createdAt: message.created_at
+        }))
+      };
+    }))
   };
   bootstrapError = "";
 }
@@ -99,7 +392,7 @@ function campaignForSession(session) {
 
 function canAccessCampaign(campaign) {
   const user = currentUser();
-  return Boolean(user && campaign && campaign.participants.includes(user.email));
+  return Boolean(user && campaign && campaign.participants.includes(user.id));
 }
 
 function canManageCampaign(campaign) {
@@ -197,7 +490,12 @@ function handleSignup(event) {
   apiRequest("/auth/register", {
     method: "POST",
     body: JSON.stringify({ name, email, password })
-  }).then(async () => {
+  }).then(async (result) => {
+    if (!result.session) {
+      signupForm.reset();
+      setAuthMessage(signupMessage, "Conta criada. Verifique seu email para confirmar o cadastro e depois entre.", false);
+      return;
+    }
     await refreshBootstrap();
     signupForm.reset();
     closeAuthModal();
@@ -246,7 +544,7 @@ function pageHeader(eyebrow, title, description = "", action = "") {
 
 function pageLayout(content) {
   return `<div class="page-shell">${content}<p id="page-feedback" class="page-feedback" role="status" hidden></p>
-    <p class="prototype-note page-disclaimer">MVP em desenvolvimento: os dados são salvos no backend local desta instalação.</p></div>`;
+    <p class="prototype-note page-disclaimer">MVP em desenvolvimento: autenticação e dados são salvos no Supabase.</p></div>`;
 }
 
 function routeLink(href, label, style = "button button-outline") {
@@ -256,14 +554,14 @@ function routeLink(href, label, style = "button button-outline") {
 function requireLogin() {
   return `<section class="access-card">
     <p class="eyebrow">Acesso necessário</p><h1>Entre para continuar</h1>
-    <p>Esta área é destinada a pessoas autenticadas. No protótipo, o acesso é apenas local.</p>
+    <p>Esta área é destinada a pessoas autenticadas na sua conta Mesa RPG.</p>
     <button class="button button-primary" type="button" data-open-auth="login">Entrar ou criar conta</button>
   </section>`;
 }
 
 function renderDashboard() {
   const user = currentUser();
-  const campaigns = data.campaigns.filter((campaign) => campaign.participants.includes(user.email));
+  const campaigns = data.campaigns.filter((campaign) => campaign.participants.includes(user.id));
   const characters = data.characters.filter((character) => character.owner === user.id);
   const sessions = data.sessions.filter((session) => campaigns.some((campaign) => campaign.id === session.campaignId));
   const activeSessions = sessions.filter((session) => session.status === "active");
@@ -361,7 +659,7 @@ function renderCampaign(id) {
             <span>${escapeHtml(member.name)}${member.role === "master" ? " · mestre" : ""}</span></li>`).join("")}</ul>
         ${canManageCampaign(campaign) ? `<form class="inline-form" data-form="invite"><label><span>Adicionar participante por email</span>
           <input type="email" name="email" placeholder="jogador@email.com" required></label><button class="button button-outline" type="submit">Adicionar</button></form>
-          <p class="form-hint">O convite é apenas local neste protótipo; o usuário precisará acessar esta mesma instalação.</p>` : ""}
+          <p class="form-hint">A pessoa precisa já ter uma conta confirmada no Mesa RPG com este email.</p>` : ""}
       </section>
     </div>`);
 }
@@ -657,7 +955,7 @@ async function renderRoute() {
     appPage.classList.remove("hidden");
     appPage.innerHTML = pageLayout(`<section class="access-card" role="alert">
       <p class="eyebrow">Falha de conexão</p><h1>Não foi possível carregar as informações</h1>
-      <p>${escapeHtml(bootstrapError)}</p><p>Confira se o servidor está em execução e tente novamente.</p>
+      <p>${escapeHtml(bootstrapError)}</p><p>Confira a configuração do Supabase, as migrações e se o servidor está em execução.</p>
       <button class="button button-outline" type="button" data-action="retry">Tentar novamente</button>
     </section>`);
     return;
