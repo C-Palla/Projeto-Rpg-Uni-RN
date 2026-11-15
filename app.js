@@ -17,6 +17,23 @@ const signupMessage = document.querySelector("#signup-message");
 const authOpenButtons = document.querySelectorAll("[data-auth-open]");
 const homeView = document.querySelector("#home-view");
 const appPage = document.querySelector("#app-page");
+const heroDiceVideo = document.querySelector(".hero-dice");
+const heroDiceFallback = document.querySelector(".hero-dice-fallback");
+
+if (heroDiceVideo && heroDiceFallback) {
+  const showHeroDiceFallback = () => {
+    heroDiceVideo.hidden = true;
+    heroDiceFallback.hidden = false;
+  };
+  const supportsHeroDiceVideo = heroDiceVideo.canPlayType("video/mp4")
+    || heroDiceVideo.canPlayType("video/webm; codecs=\"vp9\"");
+
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches || !supportsHeroDiceVideo) {
+    showHeroDiceFallback();
+  } else {
+    heroDiceVideo.addEventListener("error", showHeroDiceFallback, { once: true });
+  }
+}
 
 let activeUser = null;
 let data = { campaigns: [], characters: [], sessions: [], tables: [] };

@@ -17,7 +17,7 @@
 
     <header class="site-header">
       <a class="brand" href="#inicio" aria-label="Mesa RPG, início">
-        <span class="brand-mark" aria-hidden="true">M</span>
+        <img class="brand-mark" src="assets/logo-mesa-rpg.png" alt="" aria-hidden="true">
         <span>Mesa<span class="brand-accent">RPG</span></span>
       </a>
 
@@ -72,7 +72,11 @@
         <div class="hero-art" aria-label="Ilustração decorativa de uma aventura">
           <div class="orbit orbit-one"></div>
           <div class="orbit orbit-two"></div>
-          <div class="dice" aria-hidden="true"><span>20</span></div>
+          <video class="hero-dice" autoplay loop muted playsinline preload="auto" aria-hidden="true">
+            <source src="assets/d20_loop_transparente.mp4" type="video/mp4">
+            <source src="assets/d20_loop_transparente.webm" type="video/webm">
+          </video>
+          <div class="dice hero-dice-fallback" aria-hidden="true" hidden><span>20</span></div>
           <div class="hero-note note-top"><span class="note-icon">✦</span> Uma história começa...</div>
           <div class="hero-note note-bottom"><span class="note-avatar">M</span> A mesa está esperando</div>
           <span class="spark spark-one" aria-hidden="true">✦</span>
@@ -203,7 +207,7 @@
 
     <footer class="site-footer">
       <a class="brand" href="#inicio">
-        <span class="brand-mark" aria-hidden="true">M</span>
+        <img class="brand-mark" src="assets/logo-mesa-rpg.png" alt="" aria-hidden="true">
         <span>Mesa<span class="brand-accent">RPG</span></span>
       </a>
       <p>Feito para quem acredita que toda grande história começa ao redor de uma mesa.</p>

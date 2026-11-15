@@ -25,6 +25,23 @@ after(async () => {
   fs.rmSync(temporaryDirectory, { recursive: true, force: true });
 });
 
+test("serve os vídeos D20 da página inicial", async () => {
+  const logoResponse = await fetch(`${baseUrl}/assets/logo-mesa-rpg.png`);
+  assert.equal(logoResponse.status, 200);
+  assert.match(logoResponse.headers.get("content-type") ?? "", /^image\/png\b/);
+  assert.ok((await logoResponse.arrayBuffer()).byteLength > 0);
+
+  const mp4Response = await fetch(`${baseUrl}/assets/d20_loop_transparente.mp4`);
+  assert.equal(mp4Response.status, 200);
+  assert.match(mp4Response.headers.get("content-type") ?? "", /^video\/mp4\b/);
+  assert.ok((await mp4Response.arrayBuffer()).byteLength > 0);
+
+  const webmResponse = await fetch(`${baseUrl}/assets/d20_loop_transparente.webm`);
+  assert.equal(webmResponse.status, 200);
+  assert.match(webmResponse.headers.get("content-type") ?? "", /^video\/webm\b/);
+  assert.ok((await webmResponse.arrayBuffer()).byteLength > 0);
+});
+
 async function api(pathname, { cookie, method = "GET", body } = {}) {
   const response = await fetch(`${baseUrl}/api${pathname}`, {
     method,

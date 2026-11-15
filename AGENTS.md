@@ -39,6 +39,7 @@ Não há processo de build ou formatador configurado.
 
 - `index.html` — estrutura semântica, página inicial e contêiner das telas do protótipo.
 - `styles.css` — estilos, layout responsivo e estados de foco.
+- `assets/` — recursos estáticos públicos, incluindo o logo e o vídeo D20 da página inicial.
 - `app.js` — navegação por hash, telas e integração HTTP com a API.
 - `server.js` e `server/` — processo HTTP, rotas REST, autenticação local e persistência SQLite.
 - `supabase/migrations/` — esquema PostgreSQL e políticas RLS preparadas para futura integração Supabase.

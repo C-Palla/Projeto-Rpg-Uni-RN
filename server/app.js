@@ -701,6 +701,11 @@ const frontendFiles = express.static(path.join(__dirname, ".."), {
 app.get(["/", "/index.html", "/app.js", "/styles.css"], (request, response, next) => {
   frontendFiles(request, response, next);
 });
+app.use("/assets", express.static(path.join(__dirname, "..", "assets"), {
+  dotfiles: "deny",
+  etag: true,
+  maxAge: process.env.NODE_ENV === "production" ? "1h" : 0
+}));
 
 app.use((request, response, next) => {
   if (request.path.startsWith("/api/")) return next(apiError(404, "not_found", "Rota da API não encontrada."));
