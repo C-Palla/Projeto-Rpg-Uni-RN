@@ -352,7 +352,7 @@ async function apiRequest(path, options = {}) {
   }
   if (path === "/auth/recover" && method === "POST") {
     const { error } = await client.auth.resetPasswordForEmail(body.email, {
-      redirectTo: `${location.origin}/`
+      redirectTo: new URL("./", location.href).href
     });
     supabaseFailure(error, "Não foi possível enviar o email de recuperação.");
     return null;

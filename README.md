@@ -16,6 +16,10 @@ Antes de iniciar, preencha `SUPABASE_URL` e `SUPABASE_PUBLISHABLE_KEY` no `.env`
 
 Para enviar emails reais de recuperação, configure um servidor SMTP em Authentication → SMTP Settings. O remetente padrão do Supabase é limitado para testes e não é indicado para produção. Adicione `http://localhost:8000/` em Authentication → URL Configuration → Redirect URLs e, em produção, adicione também a URL HTTPS do site. A pessoa solicita um link na tela de login e escolhe a nova senha após abri-lo.
 
+## GitHub Pages
+
+O frontend pode ser servido estaticamente se `supabase-config.js` e `vendor/supabase.js` estiverem publicados junto com `index.html`, `app.js`, `styles.css` e `assets/`. O primeiro contém a URL do projeto e a chave publishable, ambas públicas no navegador; nunca inclua uma chave `service_role`. Configure a URL do site publicado em Authentication → URL Configuration no Supabase, incluindo a URL de redirecionamento para recuperação de senha.
+
 Para executar os testes:
 
 ```powershell
