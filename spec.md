@@ -118,12 +118,20 @@ O site reúne em um só lugar:
 - Cada sistema pode ter atributos e recursos diferentes; o formulário deve refletir essa diferença.
 - O jogador deve poder editar e salvar sua ficha.
 - A ficha pode ser vinculada a uma campanha; o vínculo não deve tornar a ficha pública por padrão.
+- O painel deve listar as fichas próprias, avulsas ou vinculadas. Um jogador pode vincular uma única ficha avulsa própria do mesmo sistema por campanha e pode desvinculá-la para escolher outra.
+- O mestre pode vincular quantas fichas avulsas próprias quiser e pode selecionar qualquer agente da campanha para desvinculá-lo. As fichas permanecem com seus proprietários como avulsas, e o histórico das sessões é preservado.
+- A lista de personagens da campanha deve mostrar o nome do proprietário de cada agente.
 - O sistema deve validar campos obrigatórios e valores numéricos dentro dos limites definidos para cada campo.
+- A visualização da ficha deve oferecer uma aba Combate com rolador de dados d4, d6, d8, d10, d12, d20 e d100, mostrando os resultados individuais e a soma.
+- Para Ordem Paranormal, o proprietário deve poder cadastrar, editar e excluir ataques na aba Combate da ficha; membros autorizados da campanha podem consultá-los e testá-los. Os ataques incluem dano, crítico, multiplicador, bônus, tipo de dano, alcance, perícia, atributo de dano, danos extras, imagem e anotações formatadas.
+- O teste de ataque deve mostrar o d20 natural, o total com o bônus e se o dado atingiu a faixa crítica configurada; não deve decidir acerto nem rolar dano.
+- A galeria de imagens deve ser privada por padrão. Uma imagem anexada a um ataque pode ser consultada pelos membros autorizados da campanha da ficha; as demais imagens permanecem visíveis apenas ao proprietário.
 
 ### RF-04 — Sessões e registro de eventos
 
 - Somente o mestre da campanha pode iniciar ou finalizar uma sessão.
 - Ao iniciar, a sessão deve receber data/hora de início e estado **Em andamento**.
+- Ao abrir uma ficha a partir da sessão ativa, deve ser possível voltar diretamente à sessão sem passar pela página da campanha.
 - Durante uma sessão ativa, alterações de ficha feitas pelo site devem gerar registros com personagem, campo, valor anterior, valor novo, autor e horário.
 - O registro automático deve incluir mudanças relevantes, como vida, mana/energia, itens e demais campos rastreados.
 - O sistema não deve registrar alterações que não foram realizadas pelo próprio site.

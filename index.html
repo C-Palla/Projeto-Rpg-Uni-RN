@@ -10,6 +10,8 @@
     <meta name="theme-color" content="#11120f">
     <title>Mesa RPG — sua próxima aventura começa aqui</title>
     <link rel="stylesheet" href="styles.css">
+    <script src="/supabase-config.js" defer></script>
+    <script src="/vendor/supabase.js" defer></script>
     <script src="app.js" defer></script>
   </head>
   <body>
@@ -152,7 +154,7 @@
             Começar uma campanha <span aria-hidden="true">↗</span>
           </button>
         </div>
-        <p class="prototype-note">O MVP utiliza uma API e um banco de dados SQLite locais.</p>
+        <p class="prototype-note">O MVP utiliza o Supabase para autenticação e armazenamento dos dados.</p>
       </section>
 
       </div>
@@ -181,9 +183,35 @@
             <span>Senha</span>
             <input type="password" id="login-password" name="password" autocomplete="current-password" placeholder="Sua senha" required>
           </label>
+          <button id="forgot-password-trigger" class="text-button auth-recovery-link" type="button">Esqueci minha senha</button>
           <button class="button button-primary auth-submit" type="submit">Entrar</button>
-          <p class="auth-helper">Sua conta será salva no servidor deste projeto. Use uma senha com pelo menos 10 caracteres.</p>
+          <p class="auth-helper">Use uma senha com pelo menos 10 caracteres.</p>
           <p id="login-message" class="auth-message" role="alert" aria-live="polite"></p>
+        </form>
+
+        <form id="recovery-form" class="auth-form hidden" novalidate>
+          <label>
+            <span>Email da sua conta</span>
+            <input type="email" id="recovery-email" name="email" autocomplete="email" placeholder="seu@email.com" required>
+          </label>
+          <button class="button button-primary auth-submit" type="submit">Enviar link de recuperação</button>
+          <p class="auth-helper">Se o email estiver cadastrado, enviaremos um link para criar uma nova senha.</p>
+          <button class="text-button" type="button" data-auth-view="login">Voltar para entrar</button>
+          <p id="recovery-message" class="auth-message" role="status" aria-live="polite"></p>
+        </form>
+
+        <form id="reset-password-form" class="auth-form hidden" novalidate>
+          <label>
+            <span>Nova senha</span>
+            <input type="password" id="reset-password" name="password" autocomplete="new-password" placeholder="Crie uma nova senha" required minlength="10">
+          </label>
+          <label>
+            <span>Confirme a nova senha</span>
+            <input type="password" id="reset-password-confirmation" name="passwordConfirmation" autocomplete="new-password" placeholder="Digite a senha novamente" required minlength="10">
+          </label>
+          <button class="button button-primary auth-submit" type="submit">Salvar nova senha</button>
+          <p class="auth-helper">A nova senha precisa ter pelo menos 10 caracteres.</p>
+          <p id="reset-password-message" class="auth-message" role="alert" aria-live="polite"></p>
         </form>
 
         <form id="signup-form" class="auth-form hidden" novalidate>
@@ -211,7 +239,7 @@
         <span>Mesa<span class="brand-accent">RPG</span></span>
       </a>
       <p>Feito para quem acredita que toda grande história começa ao redor de uma mesa.</p>
-      <span class="footer-copy">MVP · API local · 2026</span>
+      <span class="footer-copy">MVP · Supabase · 2026</span>
     </footer>
   </body>
 </html>
