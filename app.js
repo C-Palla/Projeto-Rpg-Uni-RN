@@ -1252,7 +1252,7 @@ function renderCampaign(id, showFinishForm = false) {
     : showFinishForm && !activeSession
       ? `<p class="empty-panel">Não há uma sessão ativa para encerrar.</p>`
       : "";
-  return pageLayout(`${pageHeader(escapeHtml(getSystemName(campaign.system)), escapeHtml(campaign.name),
+  return pageLayout(`${pageHeader(getSystemName(campaign.system), escapeHtml(campaign.name),
     escapeHtml(campaign.description || "Sem descrição."), action)}
     ${finishForm}
     <div class="campaign-overview">
@@ -1881,7 +1881,7 @@ function renderOrderCharacterForm(character, campaignId, draft = {}) {
     routeLink("#fichas", "Cancelar"))}
     <form class="content-panel form-panel order-character-form" data-form="character" data-system="ordem" data-id="${character?.id || ""}"
       data-selected-origin="${selectedOrigin ? "true" : "false"}" novalidate>
-      <input type="hidden" name="system" value="ordem">
+      ${renderSystemPicker("ordem", Boolean(character))}
       <input type="hidden" name="attacks" value="${escapeHtml(JSON.stringify(storedCharacterAttacks(fields.Ataques)))}">
       <label><span>Vincular a uma campanha</span><select name="campaignId"><option value="">Sem campanha</option>${campaignOptions}</select></label>
       <p class="form-hint">Jogadores podem vincular uma ficha própria por campanha; para trocar, desvincule a atual. Mestres não têm esse limite.</p>
@@ -1985,14 +1985,339 @@ function renderOrderCharacterForm(character, campaignId, draft = {}) {
           <label><span>Histórico</span><textarea name="background" rows="3" maxlength="2000">${escapeHtml(field("Histórico"))}</textarea></label>
           <label><span>Objetivo</span><textarea name="objective" rows="3" maxlength="1000">${escapeHtml(field("Objetivo"))}</textarea></label>
         </div>
-        <label class="full-field"><span>Anotações</span><textarea name="notes" rows="3" maxlength="5000">${escapeHtml(character?.notes || "")}</textarea></label>
+        <label class="full-field"><span>Anotações</span><textarea name="notes" rows="3" maxlength="5000">${escapeHtml(character?.notes || draft.notes || "")}</textarea></label>
         <div class="form-actions"><button type="button" class="button button-outline" data-action="character-step" data-step="2">Voltar</button>
           <button class="button button-primary" type="submit">${character ? "Salvar agente" : "Finalizar e criar agente"}</button></div>
       </section>
     </form>`);
 }
 
-function renderCharacterForm(id, campaignId) {
+const systemTaglines = {
+  dnd: "Fantasia heroica clássica",
+  tormenta: "Fantasia épica em Arton",
+  ordem: "Investigação paranormal"
+};
+const classicAttributes = [
+  { key: "FOR", name: "Força" },
+  { key: "DES", name: "Destreza" },
+  { key: "CON", name: "Constituição" },
+  { key: "INT", name: "Inteligência" },
+  { key: "SAB", name: "Sabedoria" },
+  { key: "CAR", name: "Carisma" }
+];
+const classicSheetSystems = {
+  dnd: {
+    sheetLabel: "Ficha de aventureiro",
+    identity: [
+      { field: "Classe", label: "Classe", placeholder: "Ex.: Guerreiro, Maga" },
+      { field: "Nível", label: "Nível", type: "number", min: 1, max: 20, value: "1" },
+      { field: "Raça", label: "Raça / espécie", placeholder: "Ex.: Anão, Elfa" },
+      { field: "Antecedente", label: "Antecedente", placeholder: "Ex.: Sábio, Soldado" },
+      {
+        field: "Alinhamento",
+        label: "Alinhamento",
+        options: ["Leal e bom", "Neutro e bom", "Caótico e bom", "Leal e neutro", "Neutro",
+          "Caótico e neutro", "Leal e mau", "Neutro e mau", "Caótico e mau"]
+      }
+    ],
+    attributeMode: "score",
+    attributeDefault: "10",
+    attributeMin: 1,
+    attributeMax: 30,
+    attributeHint: "Informe o valor de cada atributo. O modificador é calculado automaticamente: (valor − 10) ÷ 2, arredondado para baixo.",
+    combat: [
+      { field: "PV máximo", label: "PV máximo", type: "number", min: 0, legacy: "Pontos de vida" },
+      { field: "PV atual", label: "PV atual", type: "number", min: 0 },
+      { field: "Classe de Armadura", label: "Classe de Armadura (CA)", type: "number", min: 0 },
+      { field: "Deslocamento", label: "Deslocamento", placeholder: "Ex.: 9 m" },
+      { field: "Espaços de magia", label: "Espaços de magia", placeholder: "Ex.: 1º círculo: 4 · 2º círculo: 2", wide: true }
+    ],
+    resources: [{ label: "Pontos de vida", current: "PV atual", maximum: "PV máximo", color: "#c84c4c" }],
+    details: ["Classe de Armadura", "Deslocamento", "Antecedente", "Alinhamento", "Espaços de magia"]
+  },
+  tormenta: {
+    sheetLabel: "Ficha de herói",
+    identity: [
+      { field: "Raça", label: "Raça", placeholder: "Ex.: Humano, Minotauro" },
+      { field: "Classe", label: "Classe", placeholder: "Ex.: Arcanista, Guerreiro" },
+      { field: "Nível", label: "Nível", type: "number", min: 1, max: 20, value: "1" },
+      { field: "Origem", label: "Origem", placeholder: "Ex.: Acólito, Soldado" },
+      { field: "Divindade", label: "Divindade", placeholder: "Opcional" }
+    ],
+    attributeMode: "value",
+    attributeDefault: "0",
+    attributeMin: -10,
+    attributeMax: 30,
+    attributeHint: "Informe o valor de cada atributo como ele aparece na sua ficha. Confira com o mestre a edição de Tormenta20 usada na mesa.",
+    combat: [
+      { field: "PV máximo", label: "PV máximo", type: "number", min: 0, legacy: "Pontos de vida" },
+      { field: "PV atual", label: "PV atual", type: "number", min: 0 },
+      { field: "PM máximo", label: "PM máximo", type: "number", min: 0, legacy: "PM" },
+      { field: "PM atual", label: "PM atual", type: "number", min: 0 },
+      { field: "Defesa", label: "Defesa", type: "number", min: 0 },
+      { field: "Deslocamento", label: "Deslocamento", placeholder: "Ex.: 9 m" }
+    ],
+    resources: [
+      { label: "Pontos de vida", current: "PV atual", maximum: "PV máximo", color: "#c84c4c" },
+      { label: "Pontos de mana", current: "PM atual", maximum: "PM máximo", color: "#5f8fe0" }
+    ],
+    details: ["Defesa", "Deslocamento", "Origem", "Divindade"]
+  }
+};
+
+function classicFieldSpecs(system) {
+  const config = classicSheetSystems[system];
+  return [
+    ...config.identity,
+    ...classicAttributes.map(({ name }) => ({ field: name, value: config.attributeDefault })),
+    ...config.combat
+  ];
+}
+
+function classicFieldValues(system, fields = {}) {
+  return Object.fromEntries(classicFieldSpecs(system).map((spec) => [spec.field,
+    String(fields[spec.field] ?? (spec.legacy ? fields[spec.legacy] : undefined) ?? spec.value ?? "")]));
+}
+
+function formatModifier(value) {
+  return value >= 0 ? `+${value}` : `−${Math.abs(value)}`;
+}
+
+function classicAttributeModifier(score) {
+  const value = Number.parseInt(score, 10);
+  return Number.isFinite(value) ? Math.floor((value - 10) / 2) : null;
+}
+
+function dndProficiencyBonus(level) {
+  const value = Number.parseInt(level, 10);
+  return Number.isInteger(value) && value >= 1 && value <= 20 ? Math.ceil(value / 4) + 1 : null;
+}
+
+function classicSubtitle(values) {
+  const level = values["Nível"] ? `nível ${values["Nível"]}` : "";
+  const role = [values["Classe"], level].filter(Boolean).join(" · ");
+  return [values["Raça"], role].filter(Boolean).join(" · ") || "Classe e nível ainda não definidos";
+}
+
+function renderSystemPicker(selectedSystem, locked) {
+  if (locked) {
+    return `<input type="hidden" name="system" value="${escapeHtml(selectedSystem)}">
+      <p class="system-locked"><span class="system-label system-${escapeHtml(selectedSystem)}">${escapeHtml(getSystemName(selectedSystem))}</span>
+        O sistema não pode ser alterado depois que a ficha é criada.</p>`;
+  }
+  return `<fieldset class="system-picker">
+    <legend>Escolha o sistema</legend>
+    <div class="system-picker-options">
+      ${Object.entries(systems).map(([key, value]) => `<label class="system-option system-option-${key}">
+        <input type="radio" name="system" value="${key}" ${key === selectedSystem ? "checked" : ""} required>
+        <span class="system-option-mark" aria-hidden="true">${{ dnd: "D&D", tormenta: "T20", ordem: "OP" }[key]}</span>
+        <span class="system-option-text"><strong>${escapeHtml(value.name)}</strong><small>${escapeHtml(systemTaglines[key])}</small></span>
+      </label>`).join("")}
+    </div>
+  </fieldset>`;
+}
+
+function renderClassicInput(spec, value) {
+  const name = `field:${spec.field}`;
+  const control = spec.options
+    ? `<select name="${escapeHtml(name)}"><option value="">Não definido</option>
+        ${spec.options.map((option) => `<option ${option === value ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}
+        ${value && !spec.options.includes(value) ? `<option selected>${escapeHtml(value)}</option>` : ""}</select>`
+    : `<input name="${escapeHtml(name)}" type="${spec.type || "text"}" value="${escapeHtml(value)}"
+        ${spec.type === "number" ? `inputmode="numeric" step="1"` : `maxlength="${spec.wide ? 160 : 80}"`}
+        ${spec.min !== undefined ? `min="${spec.min}"` : ""} ${spec.max !== undefined ? `max="${spec.max}"` : ""}
+        ${spec.placeholder ? `placeholder="${escapeHtml(spec.placeholder)}"` : ""}>`;
+  return `<label class="${spec.wide ? "wide-field" : ""}"><span>${escapeHtml(spec.label)}</span>${control}</label>`;
+}
+
+function renderClassicPreview(system, name, values) {
+  const config = classicSheetSystems[system];
+  const resources = config.resources.map(({ label, current, maximum }) =>
+    `<div><dt>${label}</dt><dd>${escapeHtml(values[current] || "—")}<span> / ${escapeHtml(values[maximum] || "—")}</span></dd></div>`).join("");
+  const defense = system === "dnd" ? ["CA", values["Classe de Armadura"]] : ["Defesa", values.Defesa];
+  return `<span class="system-label system-${system}">${escapeHtml(getSystemName(system))}</span>
+    <h2>${escapeHtml(name || "Personagem sem nome")}</h2>
+    <p class="classic-preview-subtitle">${escapeHtml(classicSubtitle(values))}</p>
+    <div class="classic-preview-attributes">
+      ${classicAttributes.map(({ key, name: attributeName }) => {
+        const modifier = config.attributeMode === "score" ? classicAttributeModifier(values[attributeName]) : null;
+        return `<div><span>${key}</span><strong>${escapeHtml(values[attributeName] || "—")}</strong>
+          ${modifier !== null ? `<small>${formatModifier(modifier)}</small>` : ""}</div>`;
+      }).join("")}
+    </div>
+    <dl class="classic-preview-stats">
+      ${resources}
+      <div><dt>${defense[0]}</dt><dd>${escapeHtml(defense[1] || "—")}</dd></div>
+      ${system === "dnd" && dndProficiencyBonus(values["Nível"]) !== null
+        ? `<div><dt>Proficiência</dt><dd>${formatModifier(dndProficiencyBonus(values["Nível"]))}</dd></div>` : ""}
+    </dl>`;
+}
+
+function renderClassicCharacterForm(character, campaignId, selectedSystem, draft = {}) {
+  const config = classicSheetSystems[selectedSystem];
+  const values = classicFieldValues(selectedSystem, character?.fields);
+  const name = character?.name || draft.name || "";
+  const notes = character?.notes || draft.notes || "";
+  const selectedCampaign = character?.campaignId || campaignId;
+  const attributeCards = classicAttributes.map(({ key, name: attributeName }) => {
+    const modifier = config.attributeMode === "score" ? classicAttributeModifier(values[attributeName]) : null;
+    return `<label class="classic-attribute">
+      <span class="classic-attribute-heading"><span>${attributeName}</span><small>${key}</small></span>
+      <input type="number" name="field:${attributeName}" min="${config.attributeMin}" max="${config.attributeMax}" step="1"
+        inputmode="numeric" required value="${escapeHtml(values[attributeName])}" aria-label="${attributeName}">
+      ${modifier !== null ? `<output class="classic-attribute-modifier" data-attribute-modifier="${attributeName}">${formatModifier(modifier)}</output>` : ""}
+    </label>`;
+  }).join("");
+  const proficiency = dndProficiencyBonus(values["Nível"]);
+
+  return pageLayout(`${pageHeader("Ficha de personagem", character ? "Editar ficha" : "Criar ficha",
+    "Preencha as seções abaixo. A prévia ao lado mostra como a ficha vai ficar; confirme as regras com o mestre antes de jogar.",
+    routeLink("#fichas", "Cancelar"))}
+    <form class="content-panel form-panel classic-character-form system-theme-${selectedSystem}" data-form="character"
+      data-system-classic="${selectedSystem}" data-id="${character?.id || ""}">
+      ${renderSystemPicker(selectedSystem, Boolean(character))}
+      <div class="classic-layout">
+        <div class="classic-sections">
+          <section class="classic-section" aria-labelledby="classic-identity-title">
+            <h2 id="classic-identity-title"><span aria-hidden="true">1</span>Identidade</h2>
+            <div class="form-grid">
+              <label class="wide-field"><span>Nome do personagem *</span>
+                <input name="name" required maxlength="80" value="${escapeHtml(name)}" placeholder="Como o grupo vai chamar você?"></label>
+              ${config.identity.map((spec) => renderClassicInput(spec, values[spec.field])).join("")}
+              <label class="wide-field"><span>Campanha</span><select name="campaignId"><option value="">Sem campanha</option>
+                ${availableCharacterCampaigns(character, selectedSystem).map((campaign) => `<option value="${campaign.id}"
+                  ${campaign.id === selectedCampaign ? "selected" : ""}>${escapeHtml(campaign.name)}</option>`).join("")}
+              </select></label>
+            </div>
+            <p class="form-hint">Só aparecem campanhas de ${escapeHtml(getSystemName(selectedSystem))}. Jogadores podem vincular uma ficha própria por campanha; mestres não têm esse limite.</p>
+          </section>
+          <section class="classic-section" aria-labelledby="classic-attributes-title">
+            <h2 id="classic-attributes-title"><span aria-hidden="true">2</span>Atributos</h2>
+            <p class="form-hint">${escapeHtml(config.attributeHint)}</p>
+            <div class="classic-attributes-grid">${attributeCards}</div>
+          </section>
+          <section class="classic-section" aria-labelledby="classic-combat-title">
+            <h2 id="classic-combat-title"><span aria-hidden="true">3</span>Combate e recursos</h2>
+            <div class="form-grid">
+              ${config.combat.map((spec) => renderClassicInput(spec, values[spec.field])).join("")}
+              ${selectedSystem === "dnd" ? `<div class="classic-derived wide-field" aria-live="polite">
+                <span>Bônus de proficiência</span><strong data-proficiency>${proficiency === null ? "—" : formatModifier(proficiency)}</strong>
+                <small>Calculado pelo nível do personagem.</small></div>` : ""}
+            </div>
+          </section>
+          <section class="classic-section" aria-labelledby="classic-notes-title">
+            <h2 id="classic-notes-title"><span aria-hidden="true">4</span>Anotações</h2>
+            <label class="full-field"><span>Observações da ficha</span>
+              <textarea name="notes" rows="5" maxlength="5000" placeholder="Equipamentos, magias, perícias, aparência, história…">${escapeHtml(notes)}</textarea></label>
+          </section>
+          <div class="form-actions">${routeLink("#fichas", "Cancelar")}
+            <button class="button button-primary" type="submit">${character ? "Salvar alterações" : "Criar ficha"}</button></div>
+        </div>
+        <aside class="classic-preview" aria-label="Prévia da ficha">
+          <p class="eyebrow">Prévia</p>
+          <div data-classic-preview>${renderClassicPreview(selectedSystem, name, values)}</div>
+        </aside>
+      </div>
+    </form>`);
+}
+
+function readClassicFormValues(form) {
+  const values = {};
+  for (const [key, value] of new FormData(form).entries()) {
+    if (key.startsWith("field:")) values[key.slice(6)] = String(value).trim();
+  }
+  return values;
+}
+
+function updateClassicCharacterForm(form) {
+  const system = form.dataset.systemClassic;
+  if (!classicSheetSystems[system]) return;
+  const values = readClassicFormValues(form);
+  form.querySelectorAll("[data-attribute-modifier]").forEach((output) => {
+    const modifier = classicAttributeModifier(values[output.dataset.attributeModifier]);
+    output.textContent = modifier === null ? "—" : formatModifier(modifier);
+  });
+  const proficiencyOutput = form.querySelector("[data-proficiency]");
+  if (proficiencyOutput) {
+    const proficiency = dndProficiencyBonus(values["Nível"]);
+    proficiencyOutput.textContent = proficiency === null ? "—" : formatModifier(proficiency);
+  }
+  const preview = form.querySelector("[data-classic-preview]");
+  if (preview) preview.innerHTML = renderClassicPreview(system, form.elements.namedItem("name").value.trim(), values);
+}
+
+function buildClassicCharacterFields(form, character) {
+  const system = form.dataset.systemClassic;
+  const specs = classicFieldSpecs(system);
+  const replacedKeys = new Set(specs.flatMap((spec) => [spec.field, spec.legacy].filter(Boolean)));
+  const preserved = Object.fromEntries(Object.entries(character?.fields || {})
+    .filter(([key]) => !replacedKeys.has(key)));
+  return { ...preserved, ...readClassicFormValues(form) };
+}
+
+function renderClassicCharacterSheet(character, campaign) {
+  const system = character.system;
+  const config = classicSheetSystems[system];
+  const fields = character.fields || {};
+  const values = classicFieldValues(system, fields);
+  const knownKeys = new Set(classicFieldSpecs(system).flatMap((spec) => [spec.field, spec.legacy].filter(Boolean)));
+  const otherFields = Object.entries(fields).filter(([key, value]) => !knownKeys.has(key) && value !== "");
+  const resources = config.resources.map(({ label, current, maximum, color }) => {
+    const currentValue = Number(values[current]);
+    const maximumValue = Number(values[maximum]);
+    const hasValues = values[current] !== "" && values[maximum] !== "" && maximumValue > 0;
+    const percentage = hasValues ? Math.max(0, Math.min(100, currentValue / maximumValue * 100)) : 0;
+    return `<article class="order-sheet-resource" style="--resource-color:${color}">
+      <div class="order-sheet-resource-heading"><h3>${label}</h3>
+        <strong>${escapeHtml(values[current] || "—")}<span> / ${escapeHtml(values[maximum] || "—")}</span></strong></div>
+      <progress value="${percentage}" max="100" aria-label="${label}: ${escapeHtml(values[current] || "—")} de ${escapeHtml(values[maximum] || "—")}"></progress>
+    </article>`;
+  }).join("");
+  const proficiency = system === "dnd" ? dndProficiencyBonus(values["Nível"]) : null;
+  const details = [
+    ...config.details.map((key) => [key, values[key]]),
+    ...(proficiency !== null ? [["Bônus de proficiência", formatModifier(proficiency)]] : [])
+  ].map(([label, value]) => `<div class="order-sheet-detail"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value || "—")}</strong></div>`).join("");
+
+  return `<div class="order-sheet classic-sheet system-theme-${system}">
+    <section class="content-panel order-sheet-overview" aria-label="Resumo do personagem">
+      <div class="order-sheet-identity">
+        <p class="eyebrow">${config.sheetLabel} · ${escapeHtml(getSystemName(system))}</p>
+        <h2>${escapeHtml(character.name)}</h2>
+        <p>${escapeHtml(classicSubtitle(values))}</p>
+      </div>
+      <div class="order-sheet-meta">
+        ${campaign ? `<div class="order-sheet-detail"><span>Campanha</span><strong>${escapeHtml(campaign.name)}</strong></div>` : ""}
+      </div>
+    </section>
+    <section class="order-sheet-resources classic-sheet-resources" aria-label="Recursos">${resources}</section>
+    <section class="content-panel order-sheet-panel">
+      <div class="panel-heading"><h2>Atributos</h2></div>
+      <div class="classic-sheet-attributes">${classicAttributes.map(({ key, name }) => {
+        const modifier = config.attributeMode === "score" ? classicAttributeModifier(values[name]) : null;
+        return `<div class="classic-sheet-attribute"><span>${escapeHtml(name)}</span><small>${key}</small>
+          <strong>${escapeHtml(values[name] || "—")}</strong>${modifier !== null ? `<em>${formatModifier(modifier)}</em>` : ""}</div>`;
+      }).join("")}</div>
+    </section>
+    <div class="classic-sheet-columns">
+      <section class="content-panel order-sheet-panel">
+        <div class="panel-heading"><h2>Combate e detalhes</h2></div>
+        <div class="order-sheet-details">${details}</div>
+      </section>
+      ${otherFields.length ? `<section class="content-panel order-sheet-panel">
+        <div class="panel-heading"><h2>Outros campos</h2></div>
+        <div class="order-sheet-details">${otherFields.map(([name, value]) => `<div class="order-sheet-detail">
+          <span>${escapeHtml(name)}</span><strong>${escapeHtml(typeof value === "string" ? value : JSON.stringify(value))}</strong></div>`).join("")}</div>
+      </section>` : ""}
+      <section class="content-panel order-sheet-panel">
+        <div class="panel-heading"><h2>Observações</h2></div>
+        ${character.notes ? `<p class="order-sheet-notes">${escapeHtml(character.notes)}</p>` : `<p class="empty-panel">Nenhuma observação registrada.</p>`}
+      </section>
+    </div>
+  </div>`;
+}
+
+function renderCharacterForm(id, campaignId, draft = {}) {
   const character = id && id !== "nova" ? getCharacter(id) : null;
   const user = currentUser();
   if (character && character.owner !== user.id) {
@@ -2003,28 +2328,9 @@ function renderCharacterForm(id, campaignId) {
       <p>Você já possui 15 fichas. Exclua uma ficha antes de criar outra.</p>${routeLink("#fichas", "Gerenciar fichas")}</section>`);
   }
   const linkedCampaign = campaignId ? getCampaign(campaignId) : null;
-  const selectedSystem = character?.system || linkedCampaign?.system || "dnd";
-  const fields = character?.fields || {};
-  if (selectedSystem === "ordem") return renderOrderCharacterForm(character, campaignId);
-  const sys = systems[selectedSystem];
-  return pageLayout(`${pageHeader("Ficha de personagem", character ? "Editar ficha" : "Criar ficha", "Os campos do sistema são exemplos de interface; confirme edição e regras antes de usar em jogo.", routeLink("#fichas", "Cancelar"))}
-    <form class="content-panel form-panel" data-form="character" data-id="${character?.id || ""}">
-      <div class="form-grid">
-        <label><span>Nome do personagem *</span><input name="name" required value="${escapeHtml(character?.name || "")}"></label>
-        <label><span>Sistema *</span><select name="system" required>
-          ${Object.entries(systems).map(([key, value]) => `<option value="${key}" ${key === selectedSystem ? "selected" : ""}>${escapeHtml(value.name)}</option>`).join("")}
-        </select></label>
-        <label><span>Campanha</span><select name="campaignId"><option value="">Sem campanha</option>
-          ${availableCharacterCampaigns(character, selectedSystem).map((campaign) => `<option value="${campaign.id}" ${campaign.id === (character?.campaignId || campaignId) ? "selected" : ""}>${escapeHtml(campaign.name)}</option>`).join("")}
-        </select></label>
-        <p class="form-hint">Jogadores podem vincular uma ficha própria por campanha; para trocar, desvincule a atual. Mestres não têm esse limite.</p>
-        <label><span>${escapeHtml(sys.extra)}</span><input name="extra" value="${escapeHtml(fields[sys.extra] || "")}" placeholder="Ex.: atributo do personagem"></label>
-        <label><span>Pontos de vida (exemplo)</span><input name="hp" type="number" min="0" value="${escapeHtml(fields["Pontos de vida"] || "")}" placeholder="0"></label>
-        <label><span>${escapeHtml(sys.resource)} (exemplo)</span><input name="resource" value="${escapeHtml(fields[sys.resource] || "")}" placeholder="Campo ilustrativo"></label>
-      </div>
-      <label class="full-field"><span>Observações da ficha</span><textarea name="notes" rows="4" placeholder="Notas pessoais">${escapeHtml(character?.notes || "")}</textarea></label>
-      <div class="form-actions"><button class="button button-primary" type="submit">${character ? "Salvar alterações" : "Criar ficha"}</button></div>
-    </form>`);
+  const selectedSystem = character?.system || draft.system || linkedCampaign?.system || "dnd";
+  if (selectedSystem === "ordem") return renderOrderCharacterForm(character, campaignId, draft);
+  return renderClassicCharacterForm(character, campaignId, classicSheetSystems[selectedSystem] ? selectedSystem : "dnd", draft);
 }
 
 function renderOrderCharacterSheet(character, campaign, options = {}) {
@@ -2154,57 +2460,314 @@ function renderOrderCharacterSheet(character, campaign, options = {}) {
   </div>`;
 }
 
+const orderTrackClasses = {
+  "Aniquilador": "Combatente",
+  "Comandante de Campo": "Combatente",
+  "Guerreiro": "Combatente",
+  "Operações Especiais": "Combatente",
+  "Tropa de Choque": "Combatente",
+  "Atirador de Elite": "Especialista",
+  "Infiltrador": "Especialista",
+  "Médico de Campo": "Especialista",
+  "Negociador": "Especialista",
+  "Técnico": "Especialista",
+  "Conduíte": "Ocultista",
+  "Flagelador": "Ocultista",
+  "Graduado": "Ocultista",
+  "Intuitivo": "Ocultista",
+  "Lâmina Paranormal": "Ocultista"
+};
+const orderClassNames = ["Combatente", "Especialista", "Ocultista"];
+const orderAbilityGroups = [
+  { id: "Combatente", label: "Combatente" },
+  { id: "Especialista", label: "Especialista" },
+  { id: "Ocultista", label: "Ocultista" },
+  { id: "Classe", label: "Gerais de classe" },
+  { id: "Trilha", label: "Trilhas" },
+  { id: "Poder paranormal", label: "Paranormais" },
+  { id: "Origem", label: "Origens" }
+];
+const orderAbilitySections = [
+  { id: "origem", label: "Poder de origem", categories: ["Origem"] },
+  { id: "classe", label: "Poderes de classe", categories: [...orderClassNames, "Classe"] },
+  { id: "trilha", label: "Trilha", categories: ["Trilha"] },
+  { id: "paranormal", label: "Poderes paranormais", categories: ["Poder paranormal"] },
+  { id: "propria", label: "Habilidades próprias", categories: [] }
+];
+const orderPrerequisiteAttributes = { for: "Força", agi: "Agilidade", int: "Intelecto", vig: "Vigor", pre: "Presença" };
+const abilityRequirementLabels = {
+  met: "Requisitos atendidos",
+  unmet: "Requisitos pendentes",
+  unknown: "Conferir requisitos"
+};
+const abilityCatalogState = { characterId: "", group: "", track: "", query: "", onlyAvailable: false };
+
+function normalizeSearchText(value) {
+  return String(value || "").trim().toLocaleLowerCase("pt-BR");
+}
+
+function parseOrderAbility(ability) {
+  const name = String(ability?.name || "");
+  const category = String(ability?.category || "Própria");
+  const [beforeAffinity, affinity = ""] = String(ability?.description || "").split(/\s*Afinidade:\s*/);
+  const [body, prerequisites = ""] = beforeAffinity.split(/\s*Pré-requisitos?:\s*/);
+  const trackMatch = name.match(/^(.+?) · (.+?) \(NEX (\d+)%\)$/);
+  const elementMatch = name.match(/^(.+) \((Conhecimento|Energia|Morte|Sangue|Medo|Varia)\)$/);
+  const track = trackMatch?.[1] || (category === "Trilha" ? String(ability?.subcategory || "") : "");
+  const ownerClass = orderClassNames.includes(category) ? category : orderTrackClasses[track] || "";
+  const element = elementMatch?.[2] || "";
+  const tone = element
+    ? element.toLocaleLowerCase("pt-BR")
+    : ownerClass
+      ? ownerClass.toLocaleLowerCase("pt-BR")
+      : { Classe: "geral", Origem: "origem", "Poder paranormal": "varia" }[category] || "propria";
+  const eyebrow = {
+    Combatente: "Poder de Combatente",
+    Especialista: "Poder de Especialista",
+    Ocultista: "Poder de Ocultista",
+    Classe: "Poder geral de classe",
+    Trilha: track ? `Trilha ${track}${ownerClass ? ` · ${ownerClass}` : ""}` : "Poder de trilha",
+    "Poder paranormal": "Poder paranormal",
+    Origem: "Poder de origem"
+  }[category] || category;
+  return {
+    name,
+    category,
+    title: trackMatch?.[2] || elementMatch?.[1] || name,
+    eyebrow,
+    track,
+    ownerClass,
+    nex: trackMatch ? Number(trackMatch[3]) : null,
+    element,
+    tone,
+    body: body.trim(),
+    prerequisites: prerequisites.trim().replace(/\.$/, ""),
+    affinity: affinity.trim()
+  };
+}
+
+function orderAbilityContext(character) {
+  const fields = character.fields || {};
+  const abilities = getCharacterEntryList(character, "ability");
+  const elementCounts = {};
+  abilities.forEach((ability) => {
+    const { element } = parseOrderAbility(ability);
+    if (element && ability.category === "Poder paranormal") elementCounts[element] = (elementCounts[element] || 0) + 1;
+  });
+  return {
+    className: String(fields.Classe || ""),
+    nex: Number.parseInt(fields.NEX, 10),
+    attributes: Object.fromEntries(orderAttributes.map(({ name }) => [name, Number.parseInt(fields[name], 10)])),
+    hasSkillData: Boolean(fields["Perícias treinadas"]),
+    trainedSkills: new Set(String(fields["Perícias treinadas"] || "")
+      .split(/\r?\n/)
+      .map((skill) => normalizeSearchText(skill.replace(/\s*\(\+5 base\)$/, "")))
+      .filter(Boolean)),
+    abilityNames: new Set([
+      ...abilities.map((ability) => normalizeSearchText(ability.name)),
+      ...(fields["Poder da origem"] ? [normalizeSearchText(fields["Poder da origem"])] : [])
+    ]),
+    catalogNames: new Set(getOrderAbilitiesCatalog().map((item) => normalizeSearchText(item.name))),
+    elementCounts
+  };
+}
+
+function evaluateOrderRequirement(text, context) {
+  const label = text.trim();
+  const known = (isMet, detail) => ({ label, status: isMet ? "met" : "unmet", detail });
+  const unknown = (detail) => ({ label, status: "unknown", detail });
+
+  const attribute = label.match(/^(For|Agi|Int|Vig|Pre)\s+(-?\d+)$/i);
+  if (attribute) {
+    const attributeName = orderPrerequisiteAttributes[attribute[1].toLocaleLowerCase("pt-BR")];
+    const current = context.attributes[attributeName];
+    return Number.isFinite(current)
+      ? known(current >= Number(attribute[2]), `${attributeName} atual: ${current}.`)
+      : unknown(`${attributeName} não está preenchido na ficha.`);
+  }
+  const nex = label.match(/^NEX\s+(\d+)%$/i);
+  if (nex) {
+    return Number.isFinite(context.nex)
+      ? known(context.nex >= Number(nex[1]), `NEX atual: ${context.nex}%.`)
+      : unknown("O NEX não está preenchido na ficha.");
+  }
+  const trained = label.match(/^treinado em (.+)$/i);
+  if (trained) {
+    if (!context.hasSkillData) return unknown("As perícias treinadas não estão registradas na ficha.");
+    const acceptsAny = /\s+ou\s+/i.test(trained[1]);
+    const skills = trained[1].split(/\s+(?:ou|e)\s+/i);
+    const results = skills.map((skill) => context.trainedSkills.has(normalizeSearchText(skill)));
+    return known(acceptsAny ? results.some(Boolean) : results.every(Boolean),
+      acceptsAny ? "Basta ser treinado em uma das perícias." : "É preciso ser treinado em todas as perícias.");
+  }
+  const element = label.match(/^(Conhecimento|Energia|Morte|Sangue|Medo)\s+(\d+)$/i);
+  if (element) {
+    const count = context.elementCounts[element[1]] || 0;
+    return unknown(`A ficha tem ${count} poder(es) paranormal(is) de ${element[1]}. Confira a regra com o mestre.`);
+  }
+  if (context.catalogNames.has(normalizeSearchText(label))) {
+    return known(context.abilityNames.has(normalizeSearchText(label)), "Exige outro poder na ficha.");
+  }
+  return unknown("Confira este requisito com o mestre.");
+}
+
+function orderAbilityRequirements(info, context) {
+  const requirements = [];
+  if (info.ownerClass) {
+    const label = `Classe ${info.ownerClass}`;
+    requirements.push(orderClassNames.includes(context.className)
+      ? { label, status: context.className === info.ownerClass ? "met" : "unmet", detail: `Classe atual: ${context.className}.` }
+      : { label, status: "unknown", detail: "A classe da ficha não é uma das classes básicas." });
+  }
+  if (info.nex) requirements.push(evaluateOrderRequirement(`NEX ${info.nex}%`, context));
+  if (info.category === "Origem") {
+    requirements.push({ label: "Origem", status: "unknown", detail: "Vem da origem escolhida; outras origens dependem do mestre." });
+  }
+  if (info.prerequisites) {
+    for (const requirement of info.prerequisites.split(/,\s*/).filter(Boolean)) {
+      requirements.push(evaluateOrderRequirement(requirement, context));
+    }
+  }
+  return requirements;
+}
+
+function orderRequirementsStatus(requirements) {
+  if (requirements.some(({ status }) => status === "unmet")) return "unmet";
+  if (requirements.some(({ status }) => status === "unknown")) return "unknown";
+  return "met";
+}
+
+function renderAbilityBadges(info) {
+  return [
+    info.nex ? `<span class="ability-badge">NEX ${info.nex}%</span>` : "",
+    info.element ? `<span class="ability-badge ability-badge-element">${escapeHtml(info.element)}</span>` : ""
+  ].join("");
+}
+
+function renderAbilityText(info, { showPrerequisites = false } = {}) {
+  return `${info.body ? `<p class="ability-body">${escapeHtml(info.body)}</p>` : ""}
+    ${info.affinity ? `<p class="ability-affinity"><strong>Afinidade</strong>${escapeHtml(info.affinity)}</p>` : ""}
+    ${showPrerequisites && info.prerequisites
+      ? `<p class="ability-prerequisite-text"><strong>Pré-requisito:</strong> ${escapeHtml(info.prerequisites)}</p>`
+      : ""}`;
+}
+
+function renderAbilityRequirements(requirements) {
+  if (!requirements.length) return "";
+  const icons = { met: "✓", unmet: "✕", unknown: "?" };
+  const statusText = { met: "atendido", unmet: "não atendido", unknown: "conferir" };
+  return `<ul class="ability-requirements" aria-label="Requisitos">
+    ${requirements.map(({ label, status, detail }) => `<li class="is-${status}" title="${escapeHtml(detail)}">
+      <span aria-hidden="true">${icons[status]}</span>${escapeHtml(label)}<span class="sr-only">: ${statusText[status]}. ${escapeHtml(detail)}</span>
+    </li>`).join("")}
+  </ul>`;
+}
+
+function abilityCatalogMatches(card, state) {
+  if (state.group && card.group !== state.group) return false;
+  if (state.track && card.track !== state.track) return false;
+  if (state.onlyAvailable && (card.added || card.status === "unmet")) return false;
+  return !state.query || card.search.includes(state.query);
+}
+
+function renderAbilityEntryCard(ability, info, canEdit, origin = null) {
+  return `<article class="character-entry-card ability-entry tone-${info.tone}" data-ability-card
+    data-search="${escapeHtml(normalizeSearchText(`${info.name} ${info.eyebrow} ${info.element} ${ability.description || ""}`))}">
+    <div class="character-entry-heading">
+      <div><p class="eyebrow">${origin ? `Adicionada pela origem · ${escapeHtml(origin)}` : escapeHtml(info.eyebrow)}</p>
+        <h3>${escapeHtml(info.title)}</h3>
+        <div class="ability-badges">${renderAbilityBadges(info)}</div></div>
+      ${origin ? `<span class="status-chip">Automática</span>` : canEdit ? `<div class="card-actions">
+        <button class="button button-outline" type="button" data-action="edit-character-entry" data-entry-type="ability" data-id="${escapeHtml(ability.id)}">Editar</button>
+        <button class="button button-outline" type="button" data-action="remove-character-entry" data-entry-type="ability" data-id="${escapeHtml(ability.id)}">Excluir</button>
+      </div>` : ""}
+    </div>
+    ${renderAbilityText(info, { showPrerequisites: true })}
+  </article>`;
+}
+
 function renderOrderAbilityTab(character, canEdit) {
   const fields = character.fields || {};
-  const abilities = Array.isArray(fields.Habilidades)
-    ? fields.Habilidades.filter((ability) => ability && typeof ability === "object" && !Array.isArray(ability))
-    : [];
+  const abilities = getCharacterEntryList(character, "ability");
   const originAbility = fields["Poder da origem"] ? {
     name: fields["Poder da origem"],
     category: "Origem",
     description: fields["Efeito do poder de origem"] || "",
     source: fields.Origem || "Origem escolhida"
   } : null;
-  const cards = [
-    ...(originAbility ? [`<article class="character-entry-card" data-ability-card data-search="${escapeHtml(`${originAbility.name} ${originAbility.description}`.toLocaleLowerCase("pt-BR"))}">
-      <div class="character-entry-heading"><div><p class="eyebrow">Adicionada pela origem · ${escapeHtml(originAbility.source)}</p>
-        <h3>${escapeHtml(originAbility.name)}</h3></div><span class="status-chip">Automática</span></div>
-      ${originAbility.description ? `<p>${escapeHtml(originAbility.description)}</p>` : ""}
-    </article>`] : []),
-    ...abilities.map((ability) => `<article class="character-entry-card" data-ability-card data-search="${escapeHtml(`${ability.name} ${ability.category} ${ability.description}`.toLocaleLowerCase("pt-BR"))}">
-      <div class="character-entry-heading"><div><p class="eyebrow">${escapeHtml(ability.category || "Própria")}</p>
-        <h3>${escapeHtml(ability.name)}</h3></div>
-        ${canEdit ? `<div class="card-actions">
-          <button class="button button-outline" type="button" data-action="edit-character-entry" data-entry-type="ability" data-id="${escapeHtml(ability.id)}">Editar</button>
-          <button class="button button-outline" type="button" data-action="remove-character-entry" data-entry-type="ability" data-id="${escapeHtml(ability.id)}">Excluir</button>
-        </div>` : ""}
-      </div>
-      ${ability.description ? `<p>${escapeHtml(ability.description)}</p>` : ""}
-    </article>`)
-  ].join("");
 
-  const knownAbilityNames = new Set([
-    ...(originAbility ? [originAbility.name] : []),
-    ...abilities.map((ab) => ab.name)
-  ]);
-  const catalogAbilityCards = getOrderAbilitiesCatalog().map((item) => {
-    const isAdded = knownAbilityNames.has(item.name);
-    return `<article class="catalog-card" data-catalog-card="ability"
-      data-search="${escapeHtml(`${item.name} ${item.category} ${item.subcategory || ""} ${item.description}`.toLocaleLowerCase("pt-BR"))}"
-      data-group="${escapeHtml(item.category)}">
-      <div class="character-entry-heading">
-        <div>
-          <p class="eyebrow">${escapeHtml(item.category)}${item.subcategory ? ` · ${escapeHtml(item.subcategory)}` : ""}</p>
-          <h4>${escapeHtml(item.name)}</h4>
-        </div>
-        ${isAdded ? `<span class="status-chip">Na ficha</span>` : `
-          <button class="button button-small button-primary" type="button" data-action="add-catalog-item"
-            data-catalog-type="ability" data-catalog-id="${escapeHtml(item.id)}">+ Adicionar</button>
-        `}
-      </div>
-      <p>${escapeHtml(item.description)}</p>
-    </article>`;
+  const entries = [
+    ...(originAbility ? [{ ability: originAbility, info: parseOrderAbility(originAbility), origin: originAbility.source }] : []),
+    ...abilities.map((ability) => ({ ability, info: parseOrderAbility(ability), origin: null }))
+  ];
+  const sectionFor = (category) => orderAbilitySections.find((section) => section.categories.includes(category))?.id || "propria";
+  const sections = orderAbilitySections.map((section) => {
+    const sectionEntries = entries.filter(({ info }) => sectionFor(info.category) === section.id)
+      .sort((first, second) => (first.info.nex || 0) - (second.info.nex || 0));
+    if (!sectionEntries.length) return "";
+    return `<section class="ability-group" data-ability-group aria-labelledby="ability-group-${section.id}">
+      <h3 class="ability-group-title" id="ability-group-${section.id}">${section.label} <span>${sectionEntries.length}</span></h3>
+      <div class="character-entry-list">${sectionEntries.map(({ ability, info, origin }) =>
+        renderAbilityEntryCard(ability, info, canEdit, origin)).join("")}</div>
+    </section>`;
   }).join("");
+
+  const context = orderAbilityContext(character);
+  const elementTally = Object.entries(context.elementCounts)
+    .map(([element, count]) => `<span class="ability-summary-pill tone-${element.toLocaleLowerCase("pt-BR")}"><i aria-hidden="true"></i>${escapeHtml(element)} ×${count}</span>`)
+    .join("");
+  const summary = entries.length ? `<div class="ability-summary" aria-label="Resumo das habilidades">
+    <span class="ability-summary-total"><strong>${entries.length}</strong> habilidade(s) na ficha</span>
+    ${elementTally ? `<span class="ability-summary-label">Poderes por elemento</span>${elementTally}` : ""}
+  </div>` : "";
+
+  if (abilityCatalogState.characterId !== character.id) {
+    Object.assign(abilityCatalogState, { characterId: character.id, group: "", track: "", query: "", onlyAvailable: false });
+  }
+  const knownAbilityNames = new Set(entries.map(({ ability }) => normalizeSearchText(ability.name)));
+  const catalogItems = getOrderAbilitiesCatalog().map((item) => {
+    const info = parseOrderAbility(item);
+    const requirements = orderAbilityRequirements(info, context);
+    return {
+      item,
+      info,
+      requirements,
+      card: {
+        group: item.category,
+        track: info.track,
+        added: knownAbilityNames.has(normalizeSearchText(item.name)),
+        status: orderRequirementsStatus(requirements),
+        search: normalizeSearchText(`${item.name} ${info.eyebrow} ${info.element} ${item.description}`)
+      }
+    };
+  });
+  const visibleCount = catalogItems.filter(({ card }) => abilityCatalogMatches(card, abilityCatalogState)).length;
+  const groupCounts = Object.fromEntries(orderAbilityGroups.map(({ id }) =>
+    [id, catalogItems.filter(({ card }) => card.group === id).length]));
+  const catalogAbilityCards = catalogItems.map(({ item, info, requirements, card }) => `<article
+    class="catalog-card ability-card tone-${info.tone}" data-catalog-card="ability"
+    data-search="${escapeHtml(card.search)}" data-group="${escapeHtml(card.group)}" data-track="${escapeHtml(card.track)}"
+    data-status="${card.status}" data-added="${card.added}" ${abilityCatalogMatches(card, abilityCatalogState) ? "" : "hidden"}>
+    <p class="eyebrow">${escapeHtml(info.eyebrow)}</p>
+    <h4>${escapeHtml(info.title)}</h4>
+    <div class="ability-badges">${renderAbilityBadges(info)}</div>
+    ${renderAbilityText(info)}
+    ${renderAbilityRequirements(requirements)}
+    <div class="catalog-card-footer">
+      <span class="ability-status is-${card.status}">${abilityRequirementLabels[card.status]}</span>
+      ${card.added ? `<span class="status-chip">Na ficha</span>` : `<button class="button button-small button-primary" type="button"
+        data-action="add-catalog-item" data-catalog-type="ability" data-catalog-id="${escapeHtml(item.id)}"
+        aria-label="Adicionar ${escapeHtml(info.title)} à ficha">+ Adicionar</button>`}
+    </div>
+  </article>`).join("");
+
+  const trackOptions = orderClassNames.map((className) => `<optgroup label="${className}${className === context.className ? " · sua classe" : ""}">
+    ${Object.entries(orderTrackClasses).filter(([, owner]) => owner === className).map(([track]) =>
+      `<option value="${escapeHtml(track)}" ${abilityCatalogState.track === track ? "selected" : ""}>${escapeHtml(track)}</option>`).join("")}
+  </optgroup>`).join("");
+  const groupChips = [{ id: "", label: "Todas" }, ...orderAbilityGroups].map(({ id, label }) => `<button type="button"
+    class="filter-chip" data-action="ability-group-chip" data-group="${escapeHtml(id)}" aria-pressed="${abilityCatalogState.group === id}">
+    ${escapeHtml(label)}<span>${id ? groupCounts[id] : catalogItems.length}</span></button>`).join("");
 
   return `<section class="character-entry-section">
     <div class="panel-heading"><div><h2>Habilidades</h2>
@@ -2218,33 +2781,31 @@ function renderOrderAbilityTab(character, canEdit) {
       <div class="catalog-header">
         <div>
           <h3>Compêndio de Habilidades</h3>
-          <p class="form-hint">Escolha poderes de combatente, especialista, ocultista, trilhas, origens ou poderes paranormais para adicionar à ficha.</p>
+          <p class="form-hint">Os requisitos são conferidos com os atributos, o NEX, a classe e as perícias da ficha. Itens marcados com “?” dependem da avaliação do mestre.</p>
         </div>
         <button class="button button-small button-outline" type="button" data-action="close-catalog" data-catalog-type="ability">Fechar compêndio</button>
       </div>
+      <div class="filter-chips" role="group" aria-label="Filtrar por grupo">${groupChips}</div>
       <div class="character-filters">
         <label class="character-filter"><span>Buscar no compêndio</span>
-          <input type="search" data-catalog-search="ability" placeholder="Buscar por nome, classe, trilha ou efeito"></label>
-        <label><span>Filtrar por grupo</span>
-          <select data-catalog-group="ability">
-            <option value="">Todos os grupos</option>
-            <option value="Combatente">Combatente</option>
-            <option value="Especialista">Especialista</option>
-            <option value="Ocultista">Ocultista</option>
-            <option value="Classe">Poderes de Classe (Geral)</option>
-            <option value="Trilha">Poderes de Trilha</option>
-            <option value="Origem">Habilidades de Origens</option>
-            <option value="Poder paranormal">Poderes Paranormais</option>
-          </select>
-        </label>
+          <input type="search" data-catalog-search="ability" value="${escapeHtml(abilityCatalogState.query)}"
+            placeholder="Buscar por nome, classe, trilha ou efeito"></label>
+        <label><span>Trilha</span>
+          <select data-catalog-track="ability"><option value="">Todas as trilhas</option>${trackOptions}</select></label>
+        <label class="check-field"><input type="checkbox" data-catalog-available="ability" ${abilityCatalogState.onlyAvailable ? "checked" : ""}>
+          <span>Ocultar indisponíveis e já adicionadas</span></label>
       </div>
+      <p class="catalog-count" data-catalog-count="ability" aria-live="polite">Mostrando ${visibleCount} de ${catalogItems.length} habilidades</p>
       <div class="catalog-grid" data-catalog-list="ability">
         ${catalogAbilityCards}
+        <p class="empty-panel catalog-empty" data-catalog-empty="ability" ${visibleCount ? "hidden" : ""}>Nenhuma habilidade encontrada com esses filtros.</p>
       </div>
     </div>` : ""}
-    ${canEdit ? `<label class="character-filter"><span>Filtrar habilidades da ficha</span>
+    ${summary}
+    ${canEdit && entries.length ? `<label class="character-filter"><span>Filtrar habilidades da ficha</span>
       <input type="search" data-ability-filter placeholder="Buscar nas habilidades salvas na ficha"></label>` : ""}
-    <div class="character-entry-list" data-ability-list>${cards || `<p class="empty-panel">Nenhuma habilidade cadastrada além das concedidas pela origem.</p>`}</div>
+    <div class="ability-groups" data-ability-list>${sections || `<p class="empty-panel">Nenhuma habilidade cadastrada ainda. Abra o compêndio para escolher poderes da sua classe, trilha ou paranormais.</p>`}
+      <p class="empty-panel" data-ability-empty hidden>Nenhuma habilidade da ficha corresponde à busca.</p></div>
     ${canEdit ? `<form class="content-panel character-editor" data-form="character-entry" data-entry-type="ability" data-id="" hidden>
       <h3 data-entry-form-title>Nova habilidade própria</h3>
       <label><span>Nome *</span><input name="name" required maxlength="100"></label>
@@ -2656,12 +3217,15 @@ function renderCharacter(id, sessionId = "") {
       ${returnLink}`);
   }
   const fields = Object.entries(character.fields || {}).map(([name, value]) => `<div class="character-stat"><span>${escapeHtml(name)}</span><strong>${escapeHtml(value || "—")}</strong></div>`).join("");
-  return pageLayout(`${pageHeader(escapeHtml(getSystemName(character.system)), escapeHtml(character.name),
+  const sheetSummary = classicSheetSystems[character.system]
+    ? renderClassicCharacterSheet(character, campaign)
+    : `<section class="content-panel"><h2>Resumo da ficha</h2><div class="character-stats">${fields}</div>
+        ${character.notes ? `<h3>Observações</h3><p>${escapeHtml(character.notes)}</p>` : ""}</section>`;
+  return pageLayout(`${pageHeader(getSystemName(character.system), escapeHtml(character.name),
     campaign ? `Campanha: ${escapeHtml(campaign.name)}` : "Ficha sem campanha vinculada.",
     character.owner === currentUser().id ? routeLink(`#ficha/${character.id}/editar`, "Editar ficha", "button button-primary") : "")}
     ${renderCharacterTabs(
-      `<section class="content-panel"><h2>Resumo da ficha</h2><div class="character-stats">${fields}</div>
-        ${character.notes ? `<h3>Observações</h3><p>${escapeHtml(character.notes)}</p>` : ""}</section>`,
+      sheetSummary,
       renderGenericCombatPanel()
     )}
     ${returnLink}`);
@@ -2903,6 +3467,11 @@ function filterOrderCharacterEntries() {
     abilityList.querySelectorAll("[data-ability-card]").forEach((card) => {
       card.hidden = !card.dataset.search.includes(term);
     });
+    abilityList.querySelectorAll("[data-ability-group]").forEach((group) => {
+      group.hidden = !group.querySelector("[data-ability-card]:not([hidden])");
+    });
+    const emptyMessage = abilityList.querySelector("[data-ability-empty]");
+    if (emptyMessage) emptyMessage.hidden = Boolean(abilityList.querySelector("[data-ability-card]:not([hidden])"));
   }
   const circle = appPage.querySelector("[data-ritual-circle-filter]");
   const element = appPage.querySelector("[data-ritual-element-filter]");
@@ -2923,14 +3492,30 @@ function filterCatalog(catalogType) {
   const query = searchInput ? searchInput.value.trim().toLocaleLowerCase("pt-BR") : "";
 
   if (catalogType === "ability") {
-    const groupSelect = panel.querySelector("[data-catalog-group]");
-    const selectedGroup = groupSelect ? groupSelect.value : "";
-    const cards = panel.querySelectorAll('[data-catalog-card="ability"]');
+    const trackSelect = panel.querySelector("[data-catalog-track]");
+    abilityCatalogState.query = query;
+    abilityCatalogState.track = trackSelect?.value || "";
+    abilityCatalogState.onlyAvailable = Boolean(panel.querySelector("[data-catalog-available]")?.checked);
+    if (abilityCatalogState.track) abilityCatalogState.group = "Trilha";
+    panel.querySelectorAll("[data-action='ability-group-chip']").forEach((chip) => {
+      chip.setAttribute("aria-pressed", String(chip.dataset.group === abilityCatalogState.group));
+    });
+    const cards = [...panel.querySelectorAll('[data-catalog-card="ability"]')];
+    let visibleCount = 0;
     for (const card of cards) {
-      const matchSearch = !query || (card.dataset.search && card.dataset.search.includes(query));
-      const matchGroup = !selectedGroup || card.dataset.group === selectedGroup;
-      card.hidden = !(matchSearch && matchGroup);
+      card.hidden = !abilityCatalogMatches({
+        group: card.dataset.group,
+        track: card.dataset.track,
+        added: card.dataset.added === "true",
+        status: card.dataset.status,
+        search: card.dataset.search || ""
+      }, abilityCatalogState);
+      if (!card.hidden) visibleCount += 1;
     }
+    const count = panel.querySelector("[data-catalog-count]");
+    if (count) count.textContent = `Mostrando ${visibleCount} de ${cards.length} habilidades`;
+    const emptyMessage = panel.querySelector("[data-catalog-empty]");
+    if (emptyMessage) emptyMessage.hidden = visibleCount > 0;
   } else if (catalogType === "ritual") {
     const circleSelect = panel.querySelector("[data-catalog-circle]");
     const elementSelect = panel.querySelector("[data-catalog-element]");
@@ -3312,9 +3897,10 @@ function openCharacterEntryEditor(form, entry = null, itemType = "") {
     if (form.elements[name]) form.elements[name].value = value ?? "";
   }
   if (!entry && itemType && form.elements.type) form.elements.type.value = itemType;
-  updateInventorySpecificFields(form);
+  if (form.elements.type) updateInventorySpecificFields(form);
   form.hidden = false;
-  form.elements.name.focus();
+  form.scrollIntoView({ behavior: "smooth", block: "center" });
+  form.elements.name.focus({ preventScroll: true });
 }
 
 function getCharacterEntryList(character, type) {
@@ -3455,11 +4041,8 @@ async function handlePageSubmit(event) {
         location.hash = payload.campaignId ? `campanha/${payload.campaignId}` : `ficha/${result.character.id}`;
         return;
       }
-      const fields = {
-        [systems[system].extra]: values.get("extra").trim(),
-        "Pontos de vida": values.get("hp"),
-        [systems[system].resource]: values.get("resource").trim()
-      };
+      if (!classicSheetSystems[system]) throw new Error("Escolha um sistema válido para a ficha.");
+      const fields = buildClassicCharacterFields(form, form.dataset.id ? getCharacter(form.dataset.id) : null);
       const payload = {
         name: values.get("name").trim(),
         system,
@@ -3660,6 +4243,15 @@ async function handlePageClick(event) {
 
   if (action === "character-tab") {
     setCharacterTab(actionButton.closest("[data-character-tabs]"), actionButton.dataset.tab);
+    return;
+  }
+
+  if (action === "ability-group-chip") {
+    const panel = actionButton.closest("[data-catalog-panel]");
+    abilityCatalogState.group = actionButton.dataset.group || "";
+    const trackSelect = panel?.querySelector("[data-catalog-track]");
+    if (trackSelect && abilityCatalogState.group !== "Trilha") trackSelect.value = "";
+    filterCatalog("ability");
     return;
   }
 
@@ -4300,15 +4892,20 @@ appPage.addEventListener("change", (event) => {
     panel.querySelector('[data-action="delete-selected-sessions"]').disabled = selectedCount === 0;
     return;
   }
-  const systemSelect = event.target.closest('form[data-form="character"] select[name="system"]');
-  if (systemSelect && systemSelect.value === "ordem") {
-    const form = systemSelect.closest('form[data-form="character"]');
+  const systemInput = event.target.closest('form[data-form="character"] input[name="system"][type="radio"]');
+  if (systemInput) {
+    const form = systemInput.closest('form[data-form="character"]');
     const campaignId = form.elements.namedItem("campaignId").value;
     const character = form.dataset.id ? getCharacter(form.dataset.id) : null;
-    appPage.innerHTML = renderOrderCharacterForm(character, campaignId, {
-      name: form.elements.namedItem("name").value
-    });
-    updateOrderCharacterForm(appPage.querySelector('form[data-form="character"][data-system="ordem"]'));
+    const draft = {
+      system: systemInput.value,
+      name: form.elements.namedItem("name")?.value || "",
+      notes: form.elements.namedItem("notes")?.value || ""
+    };
+    appPage.innerHTML = renderCharacterForm(character?.id || "nova", campaignId, draft);
+    const orderForm = appPage.querySelector('form[data-form="character"][data-system="ordem"]');
+    if (orderForm) updateOrderCharacterForm(orderForm);
+    appPage.querySelector(`input[name="system"][value="${systemInput.value}"]`)?.focus();
     return;
   }
   const form = event.target.closest('form[data-form="character"][data-system="ordem"]');
@@ -4327,11 +4924,13 @@ appPage.addEventListener("change", (event) => {
 appPage.addEventListener("input", (event) => {
   if (event.target.matches("#public-search")) filterPublicTableCards();
   if (event.target.matches("[data-ability-filter]")) filterOrderCharacterEntries();
+  const classicForm = event.target.closest("form[data-system-classic]");
+  if (classicForm) updateClassicCharacterForm(classicForm);
   if (event.target.matches("[data-catalog-search]")) filterCatalog(event.target.dataset.catalogSearch);
 });
 appPage.addEventListener("change", (event) => {
   if (event.target.matches("#public-system-filter")) filterPublicTableCards();
-  if (event.target.matches("[data-catalog-group]")) filterCatalog("ability");
+  if (event.target.matches("[data-catalog-track], [data-catalog-available]")) filterCatalog("ability");
   if (event.target.matches("[data-catalog-circle], [data-catalog-element]")) filterCatalog("ritual");
   if (event.target.matches("[data-catalog-type-select], [data-catalog-category-select]")) filterCatalog("inventory");
 });
