@@ -10,10 +10,17 @@ const currentUserAvatar = document.querySelector("#current-user-avatar");
 const authModal = document.querySelector("#auth-modal");
 const authCloseButton = document.querySelector("#auth-close");
 const authTabs = [...document.querySelectorAll(".auth-tab")];
+const authTabsContainer = document.querySelector(".auth-tabs");
+const authTitle = document.querySelector("#auth-title");
 const loginForm = document.querySelector("#login-form");
 const signupForm = document.querySelector("#signup-form");
+const recoveryForm = document.querySelector("#recovery-form");
+const resetPasswordForm = document.querySelector("#reset-password-form");
 const loginMessage = document.querySelector("#login-message");
 const signupMessage = document.querySelector("#signup-message");
+const recoveryMessage = document.querySelector("#recovery-message");
+const resetPasswordMessage = document.querySelector("#reset-password-message");
+const forgotPasswordTrigger = document.querySelector("#forgot-password-trigger");
 const authOpenButtons = document.querySelectorAll("[data-auth-open]");
 const homeView = document.querySelector("#home-view");
 const appPage = document.querySelector("#app-page");
@@ -36,46 +43,746 @@ if (heroDiceVideo && heroDiceFallback) {
 }
 
 let activeUser = null;
-let data = { campaigns: [], characters: [], sessions: [], tables: [] };
+let data = { campaigns: [], characters: [], sessions: [], tables: [], galleryImages: [] };
 let bootstrapError = "";
+const supabaseConfig = window.MESA_SUPABASE_CONFIG || {};
+const supabaseClient = supabaseConfig.url && supabaseConfig.publishableKey && window.supabase?.createClient
+  ? window.supabase.createClient(supabaseConfig.url, supabaseConfig.publishableKey)
+  : null;
 const systems = {
   dnd: { name: "D&D 5e", resource: "Espaços de magia", extra: "Classe" },
   tormenta: { name: "Tormenta20", resource: "PM", extra: "Raça" },
   ordem: { name: "Ordem Paranormal", resource: "PE", extra: "NEX" }
 };
+const maxCharactersPerUser = 15;
+const orderItemCategories = ["0", "I", "II", "III", "IV"];
+const getOrderAbilitiesCatalog = () => (typeof orderAbilitiesCatalog !== "undefined" ? orderAbilitiesCatalog : []);
+const getOrderRitualsCatalog = () => (typeof orderRitualsCatalog !== "undefined" ? orderRitualsCatalog : []);
+const getOrderInventoryCatalog = () => (typeof orderInventoryCatalog !== "undefined" ? orderInventoryCatalog : []);
+const orderItemTypes = [
+  ["arma", "Arma"],
+  ["municao", "Munição"],
+  ["protecao", "Proteção"],
+  ["geral", "Geral"],
+  ["amaldiçoado", "Item amaldiçoado"]
+];
+const orderAttributes = [
+  { key: "FOR", name: "Força" },
+  { key: "AGI", name: "Agilidade" },
+  { key: "INT", name: "Intelecto" },
+  { key: "VIG", name: "Vigor" },
+  { key: "PRE", name: "Presença" }
+];
+const orderSkills = [
+  ["Acrobacia", "AGI", false, true], ["Adestramento", "PRE", true, false],
+  ["Artes", "PRE", true, false], ["Atletismo", "FOR", false, false],
+  ["Atualidades", "INT", false, false], ["Ciências", "INT", true, false],
+  ["Crime", "AGI", true, true], ["Diplomacia", "PRE", false, false],
+  ["Enganação", "PRE", false, false], ["Fortitude", "VIG", false, false],
+  ["Furtividade", "AGI", false, true], ["Iniciativa", "AGI", false, false],
+  ["Intimidação", "PRE", false, false], ["Intuição", "PRE", false, false],
+  ["Investigação", "INT", false, false], ["Luta", "FOR", false, false],
+  ["Medicina", "INT", false, false], ["Ocultismo", "INT", true, false],
+  ["Percepção", "PRE", false, false], ["Pilotagem", "AGI", true, false],
+  ["Pontaria", "AGI", false, false], ["Profissão", "INT", true, false],
+  ["Reflexos", "AGI", false, false], ["Religião", "PRE", true, false],
+  ["Sobrevivência", "INT", false, false], ["Tática", "INT", true, false],
+  ["Tecnologia", "INT", true, false], ["Vontade", "PRE", false, false]
+].map(([name, attribute, trainedOnly, loadPenalty]) => ({ name, attribute, trainedOnly, loadPenalty }));
+const orderDamageTypes = [
+  "Balístico", "Conhecimento", "Corte", "Eletricidade", "Energia", "Fogo", "Frio",
+  "Impacto", "Medo", "Mental", "Morte", "Perfuração", "Sangue", "Químico"
+];
+const orderClasses = {
+  combatente: { name: "Combatente", pv: 20, pvPerNex: 4, pe: 2, pePerNex: 2, san: 12, sanPerNex: 3, skillCount: 1 },
+  especialista: { name: "Especialista", pv: 16, pvPerNex: 3, pe: 3, pePerNex: 3, san: 16, sanPerNex: 4, skillCount: 7 },
+  ocultista: { name: "Ocultista", pv: 12, pvPerNex: 2, pe: 4, pePerNex: 4, san: 20, sanPerNex: 5, skillCount: 3 }
+};
+const orderOriginCatalog = [
+  {
+    name: "Acadêmico", skills: ["Ciências", "Investigação"],
+    description: "Pesquisas ou aulas sobre temas misteriosos levaram você ao conhecimento da Ordo Realitas.",
+    power: "Saber é Poder",
+    powerNotes: "Ao testar uma habilidade baseada em Intelecto, você pode gastar 2 PE para receber +5 no teste."
+  },
+  {
+    name: "Agente de Saúde", skills: ["Intuição", "Medicina"],
+    description: "Sua experiência cuidando de pessoas, em uma profissão de saúde, chamou a atenção da Ordem durante um caso paranormal.",
+    power: "Técnica Medicinal",
+    powerNotes: "Ao curar alguém, some seu Intelecto aos PV recuperados."
+  },
+  {
+    name: "Amnésico", skills: [], choiceCount: 2,
+    description: "Sem lembranças claras do passado, você encontrou na Ordem sua família e uma possível pista sobre a própria história.",
+    power: "Vislumbres do Passado",
+    powerNotes: "Uma vez por sessão, teste Intelecto (DT 10) para reconhecer alguém ou algum lugar familiar. Com sucesso, recebe 1d4 PE temporários e pode obter uma informação útil, a critério do mestre."
+  },
+  {
+    name: "Artista", skills: ["Artes", "Enganação"],
+    description: "Sua carreira criativa pode ter nascido de um encontro com o paranormal, mesmo que o público desconheça essa influência.",
+    power: "Magnum Opus",
+    powerNotes: "Uma vez por missão, alguém pode reconhecer sua obra durante uma interação. Contra essa pessoa, recebe +5 em testes de Presença e perícias baseadas nela; o mestre pode aplicar o bônus em outras situações de reconhecimento."
+  },
+  {
+    name: "Atleta", skills: ["Acrobacia", "Atletismo"],
+    description: "A competição e o alto desempenho marcaram sua vida antes de um evento paranormal aproximá-lo da Ordem.",
+    power: "110%",
+    powerNotes: "Em testes de perícia baseados em Força ou Agilidade, exceto Luta e Pontaria, gaste 2 PE para receber +5."
+  },
+  {
+    name: "Chef", skills: ["Fortitude", "Profissão"], skillDisplay: "Fortitude · Profissão (cozinheiro)",
+    description: "Cozinhar, profissionalmente ou para pessoas próximas, tornou-se uma forma inesperada de apoiar os agentes.",
+    power: "Ingrediente Secreto",
+    powerNotes: "Durante um interlúdio, ao cozinhar com a ação alimentar-se, você e os aliados que também a usaram recebem os benefícios de dois pratos. Benefícios iguais se acumulam."
+  },
+  {
+    name: "Cientista Forense", skills: ["Ciências", "Investigação"],
+    description: "Seu trabalho técnico na coleta e análise de evidências passou a investigar crimes ligados ao paranormal.",
+    power: "Investigação Científica",
+    powerNotes: "Uma vez por cena de investigação, use uma ação livre para procurar pistas com Ciências no lugar da perícia normalmente exigida."
+  },
+  {
+    name: "Criminoso", skills: ["Crime", "Furtividade"],
+    description: "A Ordem preferiu aproveitar suas habilidades fora da lei depois que você se envolveu com um caso paranormal.",
+    power: "O Crime Compensa",
+    powerNotes: "Ao fim de uma missão, escolha um item encontrado nela. Na missão seguinte, leve-o sem contar no limite de itens por patente."
+  },
+  {
+    name: "Cultista Arrependido", skills: ["Ocultismo", "Religião"],
+    description: "Você abandonou um culto paranormal e agora luta ao lado da Ordem, embora ainda precise conquistar a confiança de outros agentes.",
+    power: "Traços do Outro Lado",
+    powerNotes: "Escolha um poder paranormal. Sua Sanidade inicial é reduzida à metade do valor normal da classe."
+  },
+  {
+    name: "Desgarrado", skills: ["Fortitude", "Sobrevivência"],
+    description: "Uma vida à margem da rotina e dos confortos modernos, por escolha ou necessidade, preparou você para sobreviver.",
+    power: "Calejado",
+    powerNotes: "Recebe +1 PV para cada 5% de NEX."
+  },
+  {
+    name: "Dublê", skills: ["Pilotagem", "Reflexos"],
+    description: "A busca por adrenalina e por manobras arriscadas fez da exposição ao perigo parte do seu ofício.",
+    power: "Destemido",
+    powerNotes: "Recebe +5 em testes de perícia cuja falha causaria diretamente dano ou uma condição negativa."
+  },
+  {
+    name: "Engenheiro", skills: ["Profissão", "Tecnologia"],
+    description: "Você prefere construir e testar soluções práticas; uma invenção ligada ao paranormal pode ter atraído a Ordem.",
+    power: "Ferramentas Favoritas",
+    powerNotes: "Escolha um item que não seja arma. Para você, ele conta como uma categoria abaixo."
+  },
+  {
+    name: "Escritor", skills: ["Artes", "Atualidades"],
+    description: "As histórias que você criava se cruzaram com o paranormal; agora, você tenta impedir que a realidade tenha um final trágico.",
+    power: "Bagagem de Leitura",
+    powerNotes: "Uma vez por cena, gaste 2 PE para se tornar treinado em uma perícia à escolha até o fim da cena."
+  },
+  {
+    name: "Executivo", skills: ["Diplomacia", "Profissão"],
+    description: "Uma carreira corporativa aparentemente comum revelou segredos paranormais e levou você das rotinas de escritório às missões.",
+    power: "Processo Otimizado",
+    powerNotes: "Em um teste de perícia de teste estendido ou ao revisar documentos físicos ou digitais, gaste 2 PE para receber +5."
+  },
+  {
+    name: "Gaudério Abutre", skills: ["Luta", "Pilotagem"],
+    description: "Você fez parte dos Gaudérios Abutres e mantém a lealdade e o companheirismo do motoclube.",
+    power: "Fraternidade Gaudéria",
+    powerNotes: "Uma vez por rodada, quando um aliado adjacente for alvo de ataque ou efeito, gaste 1 PE para trocar de lugar com ele e virar o alvo. No seu próximo turno, recebe +2 em ataques contra o agressor."
+  },
+  {
+    name: "Ginasta", skills: ["Acrobacia", "Reflexos"],
+    description: "Anos de treino exigente desenvolveram seu corpo, sua técnica e sua disciplina para enfrentar o Outro Lado.",
+    power: "Mobilidade Acrobática",
+    powerNotes: "Recebe +2 na Defesa e aumenta seu deslocamento em 3 m."
+  },
+  {
+    name: "Investigador", skills: ["Investigação", "Percepção"],
+    description: "Sua experiência investigando casos, para o governo ou por conta própria, ajudou a Ordem a resolver mistérios.",
+    power: "Faro para Pistas",
+    powerNotes: "Uma vez por cena, ao procurar pistas, gaste 1 PE para receber +5 no teste."
+  },
+  {
+    name: "Jornalista", skills: ["Atualidades", "Investigação"],
+    description: "Sua busca por notícias revelou um caso paranormal; agora você procura a verdade para proteger as pessoas.",
+    power: "Fontes Confiáveis",
+    powerNotes: "Uma vez por sessão, gaste 1 PE para repetir um teste já feito para encontrar pistas, com +5, ou obter outra informação relevante a critério do mestre."
+  },
+  {
+    name: "Lutador", skills: ["Luta", "Reflexos"],
+    description: "A prática de artes marciais, esportes de luta ou brigas de rua fez do combate parte da sua trajetória.",
+    power: "Mão Pesada",
+    powerNotes: "Recebe +2 nas rolagens de dano de ataques corpo a corpo."
+  },
+  {
+    name: "Magnata", skills: ["Diplomacia", "Pilotagem"],
+    description: "Uma grande fortuna, herdada ou conquistada, permite que você apoie a luta contra o paranormal.",
+    power: "Patrocinador da Ordem",
+    powerNotes: "Seu limite de crédito é tratado como uma categoria acima do atual."
+  },
+  {
+    name: "Mercenário", skills: ["Iniciativa", "Intimidação"],
+    description: "Trabalhos militares de aluguel colocaram você em contato com situações paranormais.",
+    power: "Posição de Combate",
+    powerNotes: "No primeiro turno de cada cena de ação, gaste 2 PE para receber uma ação de movimento adicional."
+  },
+  {
+    name: "Militar", skills: ["Pontaria", "Tática"],
+    description: "O treinamento e a experiência em uma força militar prepararam você para missões e armas de fogo.",
+    power: "Para Bellum",
+    powerNotes: "Recebe +2 nas rolagens de dano com armas de fogo."
+  },
+  {
+    name: "Operário", skills: ["Fortitude", "Profissão"],
+    description: "O trabalho prático e braçal deu a você uma visão direta do mundo, até que o paranormal rompeu sua rotina.",
+    power: "Ferramenta de Trabalho",
+    powerNotes: "Escolha, com aprovação do mestre, uma arma simples ou tática que também sirva como ferramenta do seu ofício. Você sabe usá-la e recebe +1 em ataques, dano e margem de ameaça com ela."
+  },
+  {
+    name: "Policial", skills: ["Percepção", "Pontaria"],
+    description: "Uma ocorrência paranormal durante seu serviço em uma força de segurança levou você à Ordem.",
+    power: "Patrulha",
+    powerNotes: "Recebe +2 na Defesa."
+  },
+  {
+    name: "Professor", skills: ["Ciências", "Intuição"],
+    description: "Sua experiência ensinando e lidando com pessoas agora serve para preparar agentes contra ameaças do Outro Lado.",
+    power: "Aula de Campo",
+    powerNotes: "Uma vez por cena, use uma ação padrão e gaste 2 PE para dar +1 em um atributo de outro personagem em alcance curto até o fim da cena."
+  },
+  {
+    name: "Religioso", skills: ["Religião", "Vontade"],
+    description: "Sua fé e dedicação ao cuidado espiritual de outras pessoas abriram caminho para seu contato com o paranormal.",
+    power: "Acalentar",
+    powerNotes: "Recebe +5 em testes de Religião para acalmar. Quando acalma alguém, essa pessoa recupera Sanidade igual a 1d6 + sua Presença."
+  },
+  {
+    name: "Revoltado", skills: ["Furtividade", "Vontade"],
+    description: "Uma perda ou experiência marcante fez você aprender a depender de si e lutar para que outros não passem pelo mesmo.",
+    power: "Antes Só",
+    powerNotes: "Sem aliados em alcance curto, recebe +1 na Defesa, nos testes de perícia e no limite de PE por turno."
+  },
+  {
+    name: "Servidor Público", skills: ["Intuição", "Vontade"],
+    description: "Seu trabalho em um órgão público revelou que até representantes da comunidade podem estar ligados ao paranormal.",
+    power: "Espírito Cívico",
+    powerNotes: "Ao fazer um teste para ajudar, gaste 1 PE para aumentar em +2 o bônus concedido."
+  },
+  {
+    name: "Teórico da Conspiração", skills: ["Investigação", "Ocultismo"],
+    description: "Investigações sobre teorias conspiratórias acabaram revelando ameaças reais do paranormal à Ordem.",
+    power: "Eu Já Sabia",
+    powerNotes: "Recebe resistência a dano mental igual ao seu Intelecto."
+  },
+  {
+    name: "T.I.", skills: ["Investigação", "Tecnologia"],
+    description: "Sua experiência com computadores e sistemas chamou a atenção da Ordem.",
+    power: "Motor de Busca",
+    powerNotes: "Com acesso à internet e autorização do mestre, gaste 2 PE para substituir um teste de perícia por Tecnologia."
+  },
+  {
+    name: "Trabalhador Rural", skills: ["Adestramento", "Sobrevivência"],
+    description: "O trabalho no campo ou em áreas isoladas aproximou você da natureza e de histórias que se provaram verdadeiras.",
+    power: "Desbravador",
+    powerNotes: "Ao testar Adestramento ou Sobrevivência, gaste 2 PE para receber +5. Você também ignora penalidades de deslocamento por terreno difícil."
+  },
+  {
+    name: "Trambiqueiro", skills: ["Crime", "Enganação"],
+    description: "Depois de viver de golpes e falcatruas, você passou a usar sua lábia a serviço da Ordem.",
+    power: "Impostor",
+    powerNotes: "Uma vez por cena, gaste 2 PE para substituir um teste de perícia por Enganação."
+  },
+  {
+    name: "Universitário", skills: ["Atualidades", "Investigação"],
+    description: "Um achado paranormal interrompeu sua rotina de estudos e colocou você em uma formação muito mais perigosa.",
+    power: "Dedicação",
+    powerNotes: "Recebe +1 PE e mais 1 PE a cada NEX ímpar (15%, 25% etc.). Seu limite de PE por turno também aumenta em 1; isso não altera a DT dos efeitos."
+  },
+  {
+    name: "Vítima", skills: ["Reflexos", "Vontade"],
+    description: "Um encontro traumático com o paranormal levou você a lutar para proteger outras pessoas de passar pela mesma experiência.",
+    power: "Cicatrizes Psicológicas",
+    powerNotes: "Recebe +1 Sanidade para cada 5% de NEX."
+  }
+].map((origin) => ({ ...origin, source: "Livro básico" }));
 
 function currentUser() {
   return activeUser;
 }
 
-async function apiRequest(path, options = {}) {
-  const response = await fetch(`/api${path}`, {
-    ...options,
-    credentials: "same-origin",
-    headers: {
-      ...(options.body ? { "Content-Type": "application/json" } : {}),
-      ...options.headers
-    }
-  });
-  if (response.status === 204) return null;
-  const result = await response.json();
-  if (!response.ok) {
-    const error = new Error(result.error?.message || "A solicitação não foi concluída.");
-    error.status = response.status;
-    error.code = result.error?.code;
-    throw error;
+function supabaseFailure(error, fallback) {
+  if (!error) return;
+  const friendlyMessages = {
+    "Invalid login credentials": "Email ou senha inválidos.",
+    user_not_found: "Crie uma conta para este email antes de adicioná-lo.",
+    campaign_not_available: "Campanha não encontrada ou sem permissão para alterá-la.",
+    session_summary_required: "Escreva um resumo antes de finalizar a sessão.",
+    session_not_finished: "Somente sessões finalizadas podem ser excluídas.",
+    session_not_available: "Sessão não encontrada ou sem permissão para excluí-la.",
+    invalid_character_selection: "Selecione de 1 a 50 agentes válidos, sem duplicatas.",
+    character_not_in_campaign: "Um ou mais agentes já não estão vinculados a esta campanha.",
+    character_not_owned: "Você só pode desvincular fichas próprias.",
+    campaign_character_limit: "Você pode ter apenas um agente próprio por campanha. Desvincule o atual para adicionar outro.",
+    character_limit_reached: "Você já possui 15 fichas. Exclua uma ficha para criar outra.",
+    invalid_character_resources: "Informe valores válidos, dentro dos limites máximos da ficha.",
+    character_resources_not_supported: "A edição desses recursos está disponível apenas para fichas de Ordem Paranormal.",
+    invalid_character_section: "Confira os dados da seção e tente salvar novamente.",
+    character_section_not_supported: "Estas seções estão disponíveis apenas para fichas de Ordem Paranormal.",
+    table_full: "Não há vagas disponíveis nesta mesa.",
+    application_already_decided: "Esta inscrição já foi decidida."
+  };
+  throw new Error(friendlyMessages[error.message] || error.message || fallback);
+}
+
+function requireSupabase() {
+  if (!supabaseClient) {
+    throw new Error("Configure a Project URL e a publishable key do Supabase no arquivo .env e reinicie o servidor.");
   }
-  return result;
+  return supabaseClient;
+}
+
+async function supabaseRows(query, fallback) {
+  const { data: rows, error } = await query;
+  supabaseFailure(error, fallback);
+  return rows || [];
+}
+
+async function apiRequest(path, options = {}) {
+  const client = requireSupabase();
+  const method = options.method || "GET";
+  const body = options.body ? JSON.parse(options.body) : {};
+
+  if (path === "/auth/login" && method === "POST") {
+    const { data: result, error } = await client.auth.signInWithPassword(body);
+    supabaseFailure(error, "Não foi possível entrar.");
+    return result;
+  }
+  if (path === "/auth/register" && method === "POST") {
+    const { data: result, error } = await client.auth.signUp({
+      email: body.email,
+      password: body.password,
+      options: { data: { display_name: body.name } }
+    });
+    supabaseFailure(error, "Não foi possível criar a conta.");
+    return result;
+  }
+  if (path === "/auth/recover" && method === "POST") {
+    const { error } = await client.auth.resetPasswordForEmail(body.email, {
+      redirectTo: new URL("./", location.href).href
+    });
+    supabaseFailure(error, "Não foi possível enviar o email de recuperação.");
+    return null;
+  }
+  if (path === "/auth/update-password" && method === "POST") {
+    const { data: result, error } = await client.auth.updateUser({ password: body.password });
+    supabaseFailure(error, "Não foi possível atualizar a senha.");
+    return result;
+  }
+  if (path === "/auth/logout" && method === "POST") {
+    const { error } = await client.auth.signOut();
+    supabaseFailure(error, "Não foi possível sair da conta.");
+    return null;
+  }
+  const { data: verifiedUser, error: userError } = await client.auth.getUser();
+  supabaseFailure(userError, "Sua sessão expirou. Entre novamente.");
+  const user = verifiedUser.user;
+  if (!user) throw new Error("Entre na sua conta para continuar.");
+
+  if (path === "/campaigns" && method === "POST") {
+    const { data: campaignId, error } = await client.rpc("create_campaign", {
+      campaign_name: body.name,
+      campaign_system: body.system,
+      campaign_description: body.description
+    });
+    supabaseFailure(error, "Não foi possível criar a campanha.");
+    return { campaign: { id: campaignId } };
+  }
+  const campaignCharactersMatch = path.match(/^\/campaigns\/([^/]+)\/characters$/);
+  if (campaignCharactersMatch && method === "DELETE") {
+    const { error } = await client.rpc("unlink_campaign_characters", {
+      target_campaign: campaignCharactersMatch[1],
+      target_characters: body.characterIds
+    });
+    supabaseFailure(error, "Não foi possível desvincular os agentes da campanha.");
+    return null;
+  }
+  const campaignMatch = path.match(/^\/campaigns\/([^/]+)$/);
+  if (campaignMatch && method === "DELETE") {
+    const { data: campaign, error } = await client.from("campaigns")
+      .delete()
+      .eq("id", campaignMatch[1])
+      .select("id")
+      .maybeSingle();
+    supabaseFailure(error, "Não foi possível excluir a campanha.");
+    if (!campaign) throw new Error("Somente o mestre pode excluir esta campanha.");
+    return { campaign };
+  }
+  const inviteMatch = path.match(/^\/campaigns\/([^/]+)\/members$/);
+  if (inviteMatch && method === "POST") {
+    const { error } = await client.rpc("invite_campaign_member", {
+      target_campaign: inviteMatch[1],
+      invited_email: body.email
+    });
+    supabaseFailure(error, "Não foi possível adicionar esse participante.");
+    return null;
+  }
+  const resourceMatch = path.match(/^\/characters\/([^/]+)\/resources$/);
+  if (resourceMatch && method === "PATCH") {
+    const { error } = await client.rpc("update_character_resources", {
+      target_character: resourceMatch[1],
+      new_hp: body.hp,
+      new_pe: body.pe,
+      new_san: body.san
+    });
+    supabaseFailure(error, "Não foi possível salvar os recursos da ficha.");
+    return null;
+  }
+  const characterSectionMatch = path.match(/^\/characters\/([^/]+)\/section$/);
+  if (characterSectionMatch && method === "PATCH") {
+    const { error } = await client.rpc("update_character_section", {
+      target_character: characterSectionMatch[1],
+      section_name: body.section,
+      section_value: body.value
+    });
+    supabaseFailure(error, "Não foi possível salvar esta seção da ficha.");
+    return null;
+  }
+  const characterCampaignMatch = path.match(/^\/characters\/([^/]+)\/campaign$/);
+  if (characterCampaignMatch && method === "PATCH") {
+    if (typeof body.campaignId !== "string" || !body.campaignId) {
+      throw new Error("Selecione uma campanha para vincular a ficha.");
+    }
+    const { data: character, error: characterError } = await client.from("characters")
+      .select("owner_id,campaign_id,system")
+      .eq("id", characterCampaignMatch[1])
+      .maybeSingle();
+    supabaseFailure(characterError, "Não foi possível carregar a ficha.");
+    if (!character) throw new Error("Ficha não encontrada.");
+    if (character.owner_id !== user.id) throw new Error("Você só pode vincular fichas próprias.");
+    if (character.campaign_id) throw new Error("Esta ficha já está vinculada a uma campanha.");
+
+    const { data: campaign, error: campaignError } = await client.from("campaigns")
+      .select("system")
+      .eq("id", body.campaignId)
+      .maybeSingle();
+    supabaseFailure(campaignError, "Não foi possível carregar a campanha.");
+    if (!campaign) throw new Error("Campanha não encontrada ou sem permissão para acessá-la.");
+    if (campaign.system !== character.system) throw new Error("A ficha deve usar o sistema da campanha.");
+
+    const { data: linkedCharacter, error: linkError } = await client.from("characters")
+      .update({ campaign_id: body.campaignId })
+      .eq("id", characterCampaignMatch[1])
+      .eq("owner_id", user.id)
+      .is("campaign_id", null)
+      .select()
+      .single();
+    supabaseFailure(linkError, "Não foi possível vincular a ficha à campanha.");
+    return { character: linkedCharacter };
+  }
+  const characterMatch = path.match(/^\/characters(?:\/([^/]+))?$/);
+  if (characterMatch && characterMatch[1] && method === "DELETE") {
+    const { data: character, error } = await client.from("characters").delete()
+      .eq("id", characterMatch[1])
+      .eq("owner_id", user.id)
+      .select("id")
+      .maybeSingle();
+    if (error?.code === "23503") {
+      throw new Error("Esta ficha possui registros de sessões e não pode ser excluída.");
+    }
+    supabaseFailure(error, "Não foi possível excluir a ficha.");
+    if (!character) throw new Error("Ficha não encontrada ou você não tem permissão para excluí-la.");
+    return null;
+  }
+  if (characterMatch && ["POST", "PATCH"].includes(method)) {
+    const values = {
+      owner_id: user.id,
+      campaign_id: body.campaignId || null,
+      name: body.name,
+      system: body.system,
+      fields: body.fields,
+      notes: body.notes
+    };
+    const query = characterMatch[1]
+      ? client.from("characters").update(values).eq("id", characterMatch[1])
+      : client.from("characters").insert(values);
+    const { data: character, error } = await query.select().single();
+    supabaseFailure(error, "Não foi possível salvar a ficha.");
+    return { character };
+  }
+  const startSessionMatch = path.match(/^\/campaigns\/([^/]+)\/sessions$/);
+  if (startSessionMatch && method === "POST") {
+    const { data: session, error } = await client.from("game_sessions").insert({
+      campaign_id: startSessionMatch[1],
+      status: "active"
+    }).select().single();
+    supabaseFailure(error, "Não foi possível iniciar a sessão.");
+    return { session };
+  }
+  const finishMatch = path.match(/^\/sessions\/([^/]+)\/finish$/);
+  if (finishMatch && method === "POST") {
+    if (typeof body.summary !== "string" || !body.summary.trim()) {
+      throw new Error("Escreva um resumo antes de finalizar a sessão.");
+    }
+    const { data: session, error } = await client.from("game_sessions").update({
+      status: "finished",
+      ended_at: new Date().toISOString(),
+      master_summary: body.summary.trim()
+    }).eq("id", finishMatch[1]).eq("status", "active").select().single();
+    supabaseFailure(error, "Não foi possível finalizar a sessão.");
+    return { session };
+  }
+  const deleteSessionMatch = path.match(/^\/sessions\/([^/]+)$/);
+  if (deleteSessionMatch && method === "DELETE") {
+    const { error } = await client.rpc("delete_finished_session", {
+      target_session: deleteSessionMatch[1]
+    });
+    supabaseFailure(error, "Não foi possível excluir a sessão.");
+    return null;
+  }
+  if (path === "/sessions" && method === "DELETE") {
+    const { error } = await client.rpc("delete_finished_sessions", {
+      target_sessions: body.sessionIds
+    });
+    supabaseFailure(error, "Não foi possível excluir as sessões.");
+    return null;
+  }
+  if (path === "/tables" && method === "POST") {
+    const { data: table, error } = await client.from("public_tables").insert({
+      owner_id: user.id,
+      title: body.title,
+      system: body.system,
+      description: body.description,
+      schedule: body.schedule,
+      starts_at: body.startsAt,
+      timezone: body.timezone,
+      seats: body.seats,
+      requirements: body.requirements
+    }).select().single();
+    supabaseFailure(error, "Não foi possível publicar a mesa.");
+    return { table };
+  }
+  const applicationMatch = path.match(/^\/tables\/([^/]+)\/applications$/);
+  if (applicationMatch && method === "POST") {
+    const { error } = await client.from("table_applications").insert({
+      table_id: applicationMatch[1],
+      user_id: user.id,
+      message: body.message
+    });
+    supabaseFailure(error, "Não foi possível solicitar uma vaga.");
+    return null;
+  }
+  const decisionMatch = path.match(/^\/applications\/([^/]+)$/);
+  if (decisionMatch && method === "PATCH") {
+    const { error } = await client.rpc("decide_table_application", {
+      target_application: decisionMatch[1],
+      decision: body.status
+    });
+    supabaseFailure(error, "Não foi possível atualizar a inscrição.");
+    return null;
+  }
+  const messageMatch = path.match(/^\/tables\/([^/]+)\/messages$/);
+  if (messageMatch && method === "POST") {
+    const table = data.tables.find((entry) => entry.id === messageMatch[1]);
+    if (!table) throw new Error("Mesa não encontrada.");
+    const applicantId = table.owner === user.id ? body.applicantId : user.id;
+    if (!applicantId) throw new Error("Selecione uma conversa para responder.");
+    const { error } = await client.from("table_messages").insert({
+      table_id: messageMatch[1],
+      sender_id: user.id,
+      applicant_id: applicantId,
+      body: body.text
+    });
+    supabaseFailure(error, "Não foi possível enviar a mensagem.");
+    return null;
+  }
+  const closeTableMatch = path.match(/^\/tables\/([^/]+)\/status$/);
+  if (closeTableMatch && method === "PATCH" && body.status === "closed") {
+    const { error } = await client.from("public_tables").update({ status: "closed" })
+      .eq("id", closeTableMatch[1]);
+    supabaseFailure(error, "Não foi possível encerrar as inscrições.");
+    return null;
+  }
+  throw new Error("Operação não suportada pela integração Supabase.");
 }
 
 async function refreshBootstrap() {
-  const result = await apiRequest("/bootstrap");
-  activeUser = result.user;
+  const client = requireSupabase();
+  const { data: sessionResult, error: sessionError } = await client.auth.getSession();
+  supabaseFailure(sessionError, "Não foi possível verificar a sessão.");
+  const authUser = sessionResult.session?.user || null;
+  const userId = authUser?.id;
+
+  const tableQuery = client.from("public_tables").select("*").order("created_at", { ascending: false });
+  const [
+    campaignRows,
+    membershipRows,
+    characterRows,
+    sessionRows,
+    eventRows,
+    tableRows,
+    applicationRows,
+    messageRows,
+    profileRows
+  ] = await Promise.all([
+    userId ? supabaseRows(client.from("campaigns").select("*").order("created_at", { ascending: false }), "Não foi possível carregar as campanhas.") : [],
+    userId ? supabaseRows(client.from("campaign_members").select("*"), "Não foi possível carregar os participantes.") : [],
+    userId ? supabaseRows(client.from("characters").select("*").order("created_at", { ascending: false }), "Não foi possível carregar as fichas.") : [],
+    userId ? supabaseRows(client.from("game_sessions").select("*").order("started_at", { ascending: false }), "Não foi possível carregar as sessões.") : [],
+    userId ? supabaseRows(client.from("session_events").select("*").order("created_at"), "Não foi possível carregar o histórico.") : [],
+    supabaseRows(tableQuery, "Não foi possível carregar as mesas públicas."),
+    userId ? supabaseRows(client.from("table_applications").select("*").order("created_at"), "Não foi possível carregar as inscrições.") : [],
+    userId ? supabaseRows(client.from("table_messages").select("*").order("created_at"), "Não foi possível carregar as conversas.") : [],
+    userId ? supabaseRows(client.from("profiles").select("id,display_name"), "Não foi possível carregar os perfis.") : []
+  ]);
+  const attachedImageIds = [...new Set(characterRows
+    .flatMap((character) => Array.isArray(character.fields?.Ataques)
+      ? character.fields.Ataques.map((attack) => attack && typeof attack === "object" ? attack.imageId : null)
+      : [])
+    .filter((id) => typeof id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)))];
+  const [ownedImageRows, attachedImageRows] = userId ? await Promise.all([
+    supabaseRows(client.from("character_gallery_images").select("id,owner_id,storage_path,filename,content_type")
+      .eq("owner_id", userId).order("created_at", { ascending: false }), "Não foi possível carregar sua galeria."),
+    attachedImageIds.length
+      ? supabaseRows(client.from("character_gallery_images").select("id,owner_id,storage_path,filename,content_type")
+        .in("id", attachedImageIds), "Não foi possível carregar imagens anexadas às fichas.")
+      : []
+  ]) : [[], []];
+  const imageRows = new Map([...ownedImageRows, ...attachedImageRows].map((image) => [image.id, image]));
+  const galleryImages = await Promise.all([...imageRows.values()].map(async (image) => {
+    const { data: signedImage, error } = await client.storage.from("character-gallery")
+      .createSignedUrl(image.storage_path, 3600);
+    return {
+      id: image.id,
+      owner: image.owner_id,
+      storagePath: image.storage_path,
+      filename: image.filename,
+      contentType: image.content_type,
+      url: signedImage?.signedUrl || "",
+      error: error?.message || ""
+    };
+  }));
+  const profiles = new Map(profileRows.map((profile) => [profile.id, profile.display_name]));
+  const sessionNumbers = new Map();
+  const sessionCounts = new Map();
+  [...sessionRows]
+    .sort((left, right) => left.campaign_id.localeCompare(right.campaign_id)
+      || new Date(left.started_at) - new Date(right.started_at)
+      || left.id.localeCompare(right.id))
+    .forEach((session) => {
+      const number = (sessionCounts.get(session.campaign_id) || 0) + 1;
+      sessionCounts.set(session.campaign_id, number);
+      sessionNumbers.set(session.id, number);
+    });
+  const eventCharacterIds = new Set(eventRows.map((event) => event.character_id));
+  const characterNames = new Map(characterRows
+    .filter((character) => eventCharacterIds.has(character.id))
+    .map((character) => [character.id, character.name]));
+
+  activeUser = authUser ? {
+    id: authUser.id,
+    name: profiles.get(authUser.id) || authUser.user_metadata?.display_name || authUser.email,
+    email: authUser.email || ""
+  } : null;
+  const campaignIds = new Set(campaignRows.map((campaign) => campaign.id));
   data = {
-    campaigns: result.campaigns,
-    characters: result.characters,
-    sessions: result.sessions,
-    tables: result.tables
+    campaigns: campaignRows.map((campaign) => {
+      const members = membershipRows.filter((member) => member.campaign_id === campaign.id)
+        .map((member) => ({
+          id: member.user_id,
+          name: profiles.get(member.user_id) || "Aventureiro",
+          email: member.user_id === userId ? authUser.email || "" : "",
+          role: member.role
+        }));
+      return {
+        id: campaign.id,
+        owner: campaign.owner_id,
+        name: campaign.name,
+        system: campaign.system,
+        description: campaign.description,
+        participants: members.map((member) => member.id),
+        members,
+        createdAt: campaign.created_at,
+        isMaster: campaign.owner_id === userId
+      };
+    }),
+    characters: characterRows.map((character) => ({
+      id: character.id,
+      owner: character.owner_id,
+      campaignId: character.campaign_id,
+      name: character.name,
+      system: character.system,
+      fields: character.fields,
+      notes: character.notes,
+      createdAt: character.created_at,
+      updatedAt: character.updated_at
+    })),
+    galleryImages,
+    sessions: sessionRows.filter((session) => campaignIds.has(session.campaign_id)).map((session) => ({
+      id: session.id,
+      campaignId: session.campaign_id,
+      sessionNumber: sessionNumbers.get(session.id),
+      status: session.status,
+      startedAt: session.started_at,
+      endedAt: session.ended_at,
+      masterSummary: session.master_summary,
+      events: eventRows.filter((event) => event.session_id === session.id).map((event) => ({
+        id: event.id,
+        characterId: event.character_id,
+        characterName: characterNames.get(event.character_id) || "Personagem",
+        author: profiles.get(event.author_id) || "Aventureiro",
+        field: event.field_name,
+        before: event.value_before,
+        after: event.value_after,
+        createdAt: event.created_at
+      }))
+    })),
+    tables: await Promise.all(tableRows.map(async (table) => {
+      const tableApplications = applicationRows.filter((application) => application.table_id === table.id);
+      const { data: count, error } = await client.rpc("accepted_application_count", { target_table: table.id });
+      supabaseFailure(error, "Não foi possível carregar a quantidade de vagas.");
+      return {
+        id: table.id,
+        title: table.title,
+        system: table.system,
+        description: table.description,
+        schedule: table.schedule,
+        startsAt: table.starts_at,
+        timezone: table.timezone,
+        seats: table.seats,
+        requirements: table.requirements,
+        owner: table.owner_id,
+        masterName: profiles.get(table.owner_id) || "Mestre",
+        status: table.status,
+        acceptedCount: Number(count || 0),
+        availableSeats: Math.max(0, table.seats - Number(count || 0)),
+        applications: table.owner_id === userId ? tableApplications.map((application) => ({
+          id: application.id,
+          userName: profiles.get(application.user_id) || "Aventureiro",
+          userId: application.user_id,
+          tableTitle: table.title,
+          message: application.message,
+          status: application.status,
+          createdAt: application.created_at,
+          decidedAt: application.decided_at
+        })) : [],
+        myApplication: tableApplications.find((application) => application.user_id === userId) ? (() => {
+          const application = tableApplications.find((entry) => entry.user_id === userId);
+          return {
+            id: application.id,
+            status: application.status,
+            message: application.message,
+            createdAt: application.created_at
+          };
+        })() : null,
+        messages: messageRows.filter((message) => message.table_id === table.id).map((message) => ({
+          id: message.id,
+          from: message.sender_id,
+          fromName: profiles.get(message.sender_id) || "Aventureiro",
+          applicantId: message.applicant_id,
+          text: message.body,
+          createdAt: message.created_at
+        }))
+      };
+    }))
   };
   bootstrapError = "";
 }
@@ -116,12 +823,35 @@ function campaignForSession(session) {
 
 function canAccessCampaign(campaign) {
   const user = currentUser();
-  return Boolean(user && campaign && campaign.participants.includes(user.email));
+  return Boolean(user && campaign && campaign.participants.includes(user.id));
 }
 
 function canManageCampaign(campaign) {
   const user = currentUser();
   return Boolean(user && campaign && campaign.owner === user.id);
+}
+
+function canAddCharacterToCampaign(character, campaign) {
+  const user = currentUser();
+  return Boolean(user && canAccessCampaign(campaign)
+    && (canManageCampaign(campaign) || !data.characters.some((entry) =>
+      entry.id !== character?.id && entry.owner === user.id && entry.campaignId === campaign.id
+    )));
+}
+
+function availableCharacterCampaigns(character, system) {
+  return data.campaigns.filter((campaign) => canAccessCampaign(campaign)
+    && campaign.system === system
+    && (campaign.id === character?.campaignId || canAddCharacterToCampaign(character, campaign)));
+}
+
+function getCampaignSessionNumber(session) {
+  if (Number.isSafeInteger(session.sessionNumber)) return session.sessionNumber;
+  const orderedSessions = data.sessions
+    .filter((entry) => entry.campaignId === session.campaignId)
+    .sort((left, right) => new Date(left.startedAt) - new Date(right.startedAt)
+      || left.id.localeCompare(right.id));
+  return orderedSessions.findIndex((entry) => entry.id === session.id) + 1;
 }
 
 function showPageNotice(message, isError = false) {
@@ -163,17 +893,36 @@ function closeAuthModal() {
 }
 
 function setAuthView(view) {
-  const isLogin = view === "login";
+  const activeView = ["login", "signup", "recovery", "reset-password"].includes(view) ? view : "login";
+  const isLogin = activeView === "login";
+  const isSignup = activeView === "signup";
+  const isRecovery = activeView === "recovery";
+  const isResetPassword = activeView === "reset-password";
+  const forms = {
+    login: loginForm,
+    signup: signupForm,
+    recovery: recoveryForm,
+    "reset-password": resetPasswordForm
+  };
   authTabs.forEach((tab) => {
-    const isActive = tab.dataset.authView === view;
+    const isActive = tab.dataset.authView === activeView;
     tab.classList.toggle("is-active", isActive);
     tab.setAttribute("aria-selected", String(isActive));
   });
-  loginForm.classList.toggle("hidden", !isLogin);
-  signupForm.classList.toggle("hidden", isLogin);
-  loginMessage.textContent = "";
-  signupMessage.textContent = "";
-  (isLogin ? loginForm : signupForm).querySelector("input").focus();
+  authTabsContainer.classList.toggle("hidden", !isLogin && !isSignup);
+  Object.entries(forms).forEach(([name, form]) => form.classList.toggle("hidden", name !== activeView));
+  authTitle.textContent = isLogin
+    ? "Entre na sua mesa"
+    : isSignup
+      ? "Crie sua conta"
+      : isRecovery
+        ? "Recupere sua senha"
+        : "Escolha uma nova senha";
+  [loginMessage, signupMessage, recoveryMessage, resetPasswordMessage].forEach((message) => {
+    message.textContent = "";
+    message.classList.remove("is-error");
+  });
+  forms[activeView].querySelector("input")?.focus();
 }
 
 function setAuthMessage(element, message, isError = false) {
@@ -198,6 +947,52 @@ function handleLogin(event) {
     .catch((error) => setAuthMessage(loginMessage, error.message, true));
 }
 
+function handlePasswordRecovery(event) {
+  event.preventDefault();
+  const email = recoveryForm.elements.email.value.trim();
+  apiRequest("/auth/recover", {
+    method: "POST",
+    body: JSON.stringify({ email })
+  }).then(() => {
+    recoveryForm.reset();
+    setAuthMessage(recoveryMessage, "Se o email estiver cadastrado, enviaremos um link para criar uma nova senha.");
+  }).catch((error) => setAuthMessage(recoveryMessage, error.message, true));
+}
+
+function handlePasswordReset(event) {
+  event.preventDefault();
+  const password = resetPasswordForm.elements.password.value;
+  const confirmation = resetPasswordForm.elements.passwordConfirmation.value;
+  if (password.length < 10) {
+    setAuthMessage(resetPasswordMessage, "A senha precisa ter pelo menos 10 caracteres.", true);
+    return;
+  }
+  if (password !== confirmation) {
+    setAuthMessage(resetPasswordMessage, "As senhas não coincidem.", true);
+    return;
+  }
+
+  apiRequest("/auth/update-password", {
+    method: "POST",
+    body: JSON.stringify({ password })
+  }).then((result) => {
+    resetPasswordForm.reset();
+    resetPasswordForm.querySelectorAll("input, button[type='submit']").forEach((element) => {
+      element.disabled = true;
+    });
+    const user = result.user;
+    if (user) {
+      activeUser = {
+        id: user.id,
+        name: user.user_metadata?.display_name || user.email || "",
+        email: user.email || ""
+      };
+      renderAuthState();
+    }
+    setAuthMessage(resetPasswordMessage, "Senha alterada com sucesso. Você já pode continuar usando sua conta.");
+  }).catch((error) => setAuthMessage(resetPasswordMessage, error.message, true));
+}
+
 function handleSignup(event) {
   event.preventDefault();
   const name = signupForm.elements.name.value.trim();
@@ -214,7 +1009,12 @@ function handleSignup(event) {
   apiRequest("/auth/register", {
     method: "POST",
     body: JSON.stringify({ name, email, password })
-  }).then(async () => {
+  }).then(async (result) => {
+    if (!result.session) {
+      signupForm.reset();
+      setAuthMessage(signupMessage, "Conta criada. Verifique seu email para confirmar o cadastro e depois entre.", false);
+      return;
+    }
     await refreshBootstrap();
     signupForm.reset();
     closeAuthModal();
@@ -263,7 +1063,7 @@ function pageHeader(eyebrow, title, description = "", action = "") {
 
 function pageLayout(content) {
   return `<div class="page-shell">${content}<p id="page-feedback" class="page-feedback" role="status" hidden></p>
-    <p class="prototype-note page-disclaimer">MVP em desenvolvimento: os dados são salvos no backend local desta instalação.</p></div>`;
+    <p class="prototype-note page-disclaimer">MVP em desenvolvimento: autenticação e dados são salvos no Supabase.</p></div>`;
 }
 
 function routeLink(href, label, style = "button button-outline") {
@@ -273,14 +1073,14 @@ function routeLink(href, label, style = "button button-outline") {
 function requireLogin() {
   return `<section class="access-card">
     <p class="eyebrow">Acesso necessário</p><h1>Entre para continuar</h1>
-    <p>Esta área é destinada a pessoas autenticadas. No protótipo, o acesso é apenas local.</p>
+    <p>Esta área é destinada a pessoas autenticadas na sua conta Mesa RPG.</p>
     <button class="button button-primary" type="button" data-open-auth="login">Entrar ou criar conta</button>
   </section>`;
 }
 
 function renderDashboard() {
   const user = currentUser();
-  const campaigns = data.campaigns.filter((campaign) => campaign.participants.includes(user.email));
+  const campaigns = data.campaigns.filter((campaign) => campaign.participants.includes(user.id));
   const characters = data.characters.filter((character) => character.owner === user.id);
   const sessions = data.sessions.filter((session) => campaigns.some((campaign) => campaign.id === session.campaignId));
   const activeSessions = sessions.filter((session) => session.status === "active");
@@ -320,8 +1120,8 @@ function renderDashboard() {
         ${routeLink("#mesas-publicas", "Encontrar mesa", "text-button")}</div>
           ${applicationRows ? `<ul class="application-list">${applicationRows}</ul>` : `<p class="empty-panel">Você ainda não solicitou vaga em uma mesa.</p>`}
         <div class="panel-heading panel-heading-spaced"><h2>Minhas fichas</h2>
-          ${routeLink("#ficha/nova", "Criar ficha", "text-button")}</div>
-        <p class="empty-panel">${characters.length ? `${characters.length} ficha(s) disponíveis em suas campanhas.` : "Nenhuma ficha criada ainda."}</p>
+          ${routeLink("#fichas", "Gerenciar fichas", "text-button")}</div>
+        <p class="empty-panel">${characters.length} de ${maxCharactersPerUser} fichas utilizadas. Crie e gerencie suas fichas na aba Fichas.</p>
       </section>
     </div>
     <section class="content-panel dashboard-tables"><div class="panel-heading"><h2>Mesas que mestro</h2>
@@ -330,18 +1130,61 @@ function renderDashboard() {
     </section>`);
 }
 
+function renderCharacterList() {
+  const user = currentUser();
+  const characters = data.characters.filter((character) => character.owner === user.id);
+  const canCreate = characters.length < maxCharactersPerUser;
+  const items = characters.map((character) => {
+    const campaign = character.campaignId ? getCampaign(character.campaignId) : null;
+    const campaignLabel = campaign
+      ? campaign.name
+      : character.campaignId ? "Vinculada a uma campanha" : "Ficha avulsa";
+    return `<article class="list-card compact-card">
+      <div><h3>${escapeHtml(character.name)}</h3>
+        <p>${escapeHtml(getSystemName(character.system))} · ${escapeHtml(campaignLabel)}</p></div>
+      <div class="card-actions">
+        ${routeLink(`#ficha/${character.id}`, "Abrir ficha")}
+        ${routeLink(`#ficha/${character.id}/editar`, "Editar", "button button-outline")}
+        <button class="button button-outline" type="button" data-action="delete-character" data-id="${escapeHtml(character.id)}">Excluir</button>
+      </div>
+    </article>`;
+  }).join("");
+  return pageLayout(`${pageHeader("Suas fichas", "Fichas", `${characters.length} de ${maxCharactersPerUser} fichas utilizadas.`,
+    canCreate
+      ? routeLink("#ficha/nova", "Criar ficha", "button button-primary")
+      : "")}
+    ${!canCreate ? `<p class="empty-panel character-limit-notice">Você atingiu o limite de 15 fichas. Exclua uma ficha para criar outra.</p>` : ""}
+    <section class="list-stack">${items || `<p class="empty-panel">Você ainda não criou fichas.</p>`}</section>`);
+}
+
 function renderCampaignList() {
   const campaigns = data.campaigns.filter((campaign) => canAccessCampaign(campaign));
   const items = campaigns.map((campaign) => `<article class="list-card">
     <div><span class="system-label system-${campaign.system}">${escapeHtml(getSystemName(campaign.system))}</span>
     <h3>${escapeHtml(campaign.name)}</h3><p>${escapeHtml(campaign.description || "Sem descrição.")}</p></div>
-    ${routeLink(`#campanha/${campaign.id}`, "Abrir campanha")}
+    <div class="card-actions">
+      ${routeLink(`#campanha/${campaign.id}`, "Abrir campanha")}
+      ${canManageCampaign(campaign) ? `<button class="button button-outline" type="button" data-action="delete-campaign" data-id="${campaign.id}">Excluir campanha</button>` : ""}
+    </div>
   </article>`).join("");
   return pageLayout(`${pageHeader("Campanhas privadas", "Minhas campanhas", "Conteúdo visível somente aos participantes autorizados.", `<button class="button button-primary" type="button" data-action="new-campaign">Criar campanha</button>`)}
     <section class="list-stack">${items || `<p class="empty-panel">Nenhuma campanha encontrada.</p>`}</section>`);
 }
 
-function renderCampaign(id) {
+function renderCampaignCreationForm() {
+  return pageLayout(`${pageHeader("Campanhas privadas", "Criar campanha", "Campanhas ficam privadas e só participantes podem acessá-las.")}
+    <form class="content-panel form-panel" data-form="campaign">
+      <label><span>Nome da campanha *</span><input name="name" required maxlength="80"></label>
+      <label><span>Sistema *</span><select name="system" required><option value="">Selecione</option>
+        ${Object.entries(systems).map(([key, system]) => `<option value="${key}">${escapeHtml(system.name)}</option>`).join("")}</select></label>
+      <label><span>Descrição</span><textarea name="description" rows="4" maxlength="500"></textarea></label>
+      <p class="form-hint">Adicione o email de uma conta já cadastrada no sistema.</p>
+      <div class="form-actions"><button class="button button-primary" type="submit">Criar campanha privada</button>
+        ${routeLink("#painel", "Cancelar", "button button-outline")}</div>
+    </form>`);
+}
+
+function renderCampaign(id, showFinishForm = false) {
   const campaign = getCampaign(id);
   if (!canAccessCampaign(campaign)) {
     return pageLayout(`<section class="access-card"><p class="eyebrow">Campanha privada</p><h1>Campanha indisponível</h1>
@@ -351,82 +1194,2041 @@ function renderCampaign(id) {
   const sessions = data.sessions.filter((session) => session.campaignId === campaign.id)
     .sort((a, b) => new Date(b.startedAt) - new Date(a.startedAt));
   const activeSession = sessions.find((session) => session.status === "active");
-  const characterItems = characters.map((character) => `<article class="list-card compact-card">
-    <div><h3>${escapeHtml(character.name)}</h3><p>${escapeHtml(getSystemName(character.system))} · ${escapeHtml(character.owner)}</p></div>
-    ${routeLink(`#ficha/${character.id}`, "Abrir ficha")}</article>`).join("");
-  const sessionItems = sessions.map((session) => `<article class="list-card compact-card">
-    <div><h3>${session.status === "active" ? "Sessão em andamento" : "Sessão finalizada"}</h3>
+  const isMaster = canManageCampaign(campaign);
+  const finishedSessionCount = sessions.filter((session) => session.status === "finished").length;
+  const canSelectCharactersToUnlink = isMaster || characters.some((character) => character.owner === currentUser().id);
+  const hasOwnCampaignCharacter = characters.some((character) => character.owner === currentUser().id);
+  const ownStandaloneCharacters = data.characters.filter((character) =>
+    character.owner === currentUser().id && !character.campaignId
+  );
+  const characterItems = characters.map((character) => {
+    const ownerName = campaign.members.find((member) => member.id === character.owner)?.name || "Proprietário não disponível";
+    return `<article class="list-card compact-card">
+      ${isMaster || character.owner === currentUser().id ? `<label class="session-select"><input type="checkbox" data-character-select value="${escapeHtml(character.id)}"
+        aria-label="Selecionar agente ${escapeHtml(character.name)} para desvincular da campanha"></label>` : ""}
+      <div><h3>${escapeHtml(character.name)}</h3>
+        <p>${escapeHtml(getSystemName(character.system))} · Jogador: ${escapeHtml(ownerName)}</p></div>
+      ${routeLink(`#ficha/${character.id}`, "Abrir ficha")}</article>`;
+  }).join("");
+  const agentPickerItems = ownStandaloneCharacters.map((character) => {
+    const isCompatible = character.system === campaign.system;
+    const canLink = isCompatible && canAddCharacterToCampaign(character, campaign);
+    return `<article class="list-card compact-card">
+      <div><h3>${escapeHtml(character.name)}</h3>
+        <p>${escapeHtml(getSystemName(character.system))}${!isCompatible
+          ? " · Sistema diferente da campanha"
+          : canLink ? " · Ficha avulsa" : " · Você já tem um agente nesta campanha"}</p></div>
+      <button class="button button-outline" type="button" data-action="link-character"
+        data-id="${character.id}" data-campaign="${campaign.id}" ${canLink ? "" : "disabled"}>
+        ${!isCompatible ? "Incompatível" : canLink ? "Vincular à campanha" : "Limite atingido"}</button></article>`;
+  }).join("");
+  const sessionItems = sessions.map((session) => `<article class="list-card compact-card" data-session-item>
+    ${session.status === "finished" && isMaster
+      ? `<label class="session-select"><input type="checkbox" data-session-select value="${session.id}"
+          aria-label="Selecionar Sessão ${getCampaignSessionNumber(session)} para excluir"></label>`
+      : ""}
+    <div><h3>Sessão ${getCampaignSessionNumber(session)}${session.status === "active" ? " · Em andamento" : ""}</h3>
     <p>${formatDate(session.startedAt)}</p></div>
-    ${routeLink(session.status === "active" ? `#sessao/${session.id}` : `#historico/${session.id}`,
-      session.status === "active" ? "Acessar sessão" : "Ver histórico")}</article>`).join("");
-  const action = canManageCampaign(campaign)
-    ? activeSession ? routeLink(`#sessao/${activeSession.id}`, "Abrir sessão ativa", "button button-primary")
+    <div class="card-actions">${routeLink(session.status === "active" ? `#sessao/${session.id}` : `#historico/${session.id}`,
+      session.status === "active" ? "Abrir sessão ativa" : "Ver resumo e linha do tempo")}</div></article>`).join("");
+  const action = isMaster
+    ? activeSession
+      ? `<div class="campaign-session-actions">${routeLink(`#sessao/${activeSession.id}`, "Abrir sessão ativa", "button button-outline")}
+          ${routeLink(`#campanha/${campaign.id}/encerrar`, "Encerrar sessão", "button button-primary")}</div>`
       : `<button class="button button-primary" type="button" data-action="start-session" data-id="${campaign.id}">Iniciar sessão</button>`
-    : "";
-  return pageLayout(`${pageHeader(escapeHtml(getSystemName(campaign.system)), escapeHtml(campaign.name),
+    : activeSession
+      ? routeLink(`#sessao/${activeSession.id}`, "Abrir sessão ativa", "button button-outline")
+      : "";
+  const finishForm = showFinishForm && activeSession && isMaster
+    ? `<form class="content-panel form-panel session-finish-form" data-form="finish-session" data-id="${activeSession.id}">
+        <p class="eyebrow">Encerramento da sessão ${getCampaignSessionNumber(activeSession)}</p>
+        <h2>Escreva o resumo antes de arquivar</h2>
+        <p>A sessão e sua linha do tempo só serão finalizadas depois que você salvar um resumo.</p>
+        <label><span>Resumo da sessão *</span><textarea name="summary" rows="5" maxlength="10000" minlength="1" required
+          placeholder="Registre o que aconteceu nesta sessão."></textarea></label>
+        <div class="form-actions"><button class="button button-primary" type="submit">Salvar resumo e finalizar sessão</button>
+          ${routeLink(`#campanha/${campaign.id}`, "Cancelar", "button button-outline")}</div>
+      </form>`
+    : showFinishForm && !activeSession
+      ? `<p class="empty-panel">Não há uma sessão ativa para encerrar.</p>`
+      : "";
+  return pageLayout(`${pageHeader(getSystemName(campaign.system), escapeHtml(campaign.name),
     escapeHtml(campaign.description || "Sem descrição."), action)}
+    ${finishForm}
     <div class="campaign-overview">
       <section class="content-panel"><div class="panel-heading"><h2>Personagens</h2>
-        ${routeLink(`#ficha/nova?campanha=${campaign.id}`, "Adicionar ficha", "text-button")}</div>
-        <div class="list-stack">${characterItems || `<p class="empty-panel">Ainda não há fichas vinculadas a esta campanha.</p>`}</div>
+        <div class="card-actions">
+          <button class="button button-outline" type="button" data-action="toggle-agent-picker"
+            aria-expanded="false" aria-controls="campaign-agent-picker">Adicionar agentes</button>
+          ${canSelectCharactersToUnlink && characters.length ? `<div class="session-header-actions">
+            <div class="session-selection-tools" data-character-selection-tools hidden>
+              <span data-character-selection-count>0 selecionados</span>
+              <button class="button button-outline" type="button" data-action="unlink-selected-characters"
+                data-campaign="${escapeHtml(campaign.id)}" disabled>Desvincular selecionados</button>
+            </div>
+            <button class="icon-button" type="button" data-action="toggle-character-selection"
+              aria-label="Selecionar agentes para desvincular" aria-pressed="false" title="Selecionar agentes para desvincular">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 14h10l1-14M9 7V4h6v3"/></svg>
+            </button>
+          </div>` : ""}
+        </div></div>
+        <div id="campaign-agent-picker" class="agent-picker" hidden>
+          <p class="form-hint">${isMaster
+            ? "Escolha fichas avulsas que você criou; como mestre, você pode adicionar quantas quiser."
+            : hasOwnCampaignCharacter
+              ? "Você já tem um agente nesta campanha. Desvincule sua ficha atual para adicionar outra."
+              : "Escolha uma ficha avulsa sua. Você pode ter apenas um agente próprio nesta campanha."}</p>
+          <div class="list-stack">${agentPickerItems || `<p class="empty-panel">Você não tem fichas avulsas para adicionar.</p>`}</div>
+        </div>
+        <div class="list-stack character-list" data-character-list>${characterItems || `<p class="empty-panel">Ainda não há fichas vinculadas a esta campanha.</p>`}</div>
       </section>
-      <section class="content-panel"><div class="panel-heading"><h2>Sessões</h2></div>
-        <div class="list-stack">${sessionItems || `<p class="empty-panel">Nenhuma sessão registrada. ${canManageCampaign(campaign) ? "Inicie a primeira sessão." : ""}</p>`}</div>
+      <section class="content-panel"><div class="panel-heading"><h2>Sessões</h2>
+        ${isMaster && finishedSessionCount > 0
+          ? `<div class="session-header-actions">
+              <div class="session-selection-tools" data-session-selection-tools hidden>
+                <span data-session-selection-count>0 selecionadas</span>
+                <button class="button button-outline" type="button" data-action="delete-selected-sessions" disabled>Excluir selecionadas</button>
+              </div>
+              <button class="icon-button" type="button" data-action="toggle-session-selection" aria-label="Selecionar sessões para excluir"
+                aria-pressed="false" title="Selecionar sessões para excluir">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 14h10l1-14M9 7V4h6v3"/></svg>
+              </button>
+            </div>`
+          : ""}
+      </div>
+        <div class="list-stack session-list" data-session-list>${sessionItems || `<p class="empty-panel">Nenhuma sessão registrada. ${canManageCampaign(campaign) ? "Inicie a primeira sessão." : ""}</p>`}</div>
       </section>
       <section class="content-panel"><div class="panel-heading"><h2>Participantes</h2></div>
         <ul class="member-list">${campaign.members.map((member) => `<li><span class="user-avatar">${escapeHtml(member.name.charAt(0).toUpperCase())}</span>
             <span>${escapeHtml(member.name)}${member.role === "master" ? " · mestre" : ""}</span></li>`).join("")}</ul>
         ${canManageCampaign(campaign) ? `<form class="inline-form" data-form="invite"><label><span>Adicionar participante por email</span>
           <input type="email" name="email" placeholder="jogador@email.com" required></label><button class="button button-outline" type="submit">Adicionar</button></form>
-          <p class="form-hint">O convite é apenas local neste protótipo; o usuário precisará acessar esta mesma instalação.</p>` : ""}
+          <p class="form-hint">A pessoa precisa já ter uma conta confirmada no Mesa RPG com este email.</p>` : ""}
       </section>
     </div>`);
 }
 
-function renderCharacterForm(id, campaignId) {
+function orderSkillOptions(selected = "") {
+  return `<option value="">Selecione uma perícia</option>${orderSkills.map((skill) =>
+    `<option value="${escapeHtml(skill.name)}" ${skill.name === selected ? "selected" : ""}>${escapeHtml(skill.name)} · ${skill.attribute}${skill.trainedOnly ? " · requer treino" : ""}${skill.loadPenalty ? " · penalidade de carga" : ""}</option>`
+  ).join("")}`;
+}
+
+function renderOrderSkillSelect(name, label, selected = "", required = false, extraAttributes = "") {
+  return `<label><span>${escapeHtml(label)}</span><select name="${escapeHtml(name)}" ${required ? "required" : ""} ${extraAttributes}>
+    ${orderSkillOptions(selected)}</select></label>`;
+}
+
+function renderCombatRoller() {
+  return `<section class="combat-roll-panel" aria-labelledby="dice-roller-title" data-dice-roller>
+    <div><p class="eyebrow">Rolador de dados</p><h3 id="dice-roller-title">Teste livre</h3>
+      <p class="form-hint">Escolha a quantidade e o dado. O resultado mostra cada rolagem e a soma.</p></div>
+    <div class="dice-roller-controls">
+      <label><span>Quantidade</span><input type="number" min="1" max="20" value="1" data-dice-count></label>
+      <label><span>Tipo de dado</span><select data-dice-sides>
+        ${[4, 6, 8, 10, 12, 20, 100].map((sides) => `<option value="${sides}" ${sides === 20 ? "selected" : ""}>d${sides}</option>`).join("")}
+      </select></label>
+      <button class="button button-outline" type="button" data-action="roll-dice">Rolar dados</button>
+    </div>
+    <p class="dice-roller-result" role="status" aria-live="polite" data-dice-result>Escolha um dado para começar.</p>
+  </section>`;
+}
+
+function setCharacterTab(container, selectedTab) {
+  container.querySelectorAll("[data-character-tab-panel]").forEach((panel) => {
+    panel.hidden = panel.dataset.characterTabPanel !== selectedTab;
+  });
+  container.querySelectorAll("[data-action='character-tab']").forEach((tab) => {
+    const selected = tab.dataset.tab === selectedTab;
+    tab.classList.toggle("is-current", selected);
+    tab.setAttribute("aria-selected", String(selected));
+    tab.tabIndex = selected ? 0 : -1;
+  });
+}
+
+function sanitizeAttackNotes(html) {
+  const template = document.createElement("template");
+  template.innerHTML = String(html || "");
+  const allowedTags = new Set(["B", "STRONG", "I", "EM", "U", "BR"]);
+  const clean = (parent) => {
+    [...parent.childNodes].forEach((node) => {
+      if (node.nodeType === Node.TEXT_NODE) return;
+      if (node.nodeType !== Node.ELEMENT_NODE) {
+        node.remove();
+        return;
+      }
+      clean(node);
+      if (allowedTags.has(node.tagName)) {
+        [...node.attributes].forEach((attribute) => node.removeAttribute(attribute.name));
+      } else {
+        node.replaceWith(...node.childNodes);
+      }
+    });
+  };
+  clean(template.content);
+  return template.innerHTML;
+}
+
+function renderGalleryImageButton(image, selectedId = "") {
+  const selected = image.id === selectedId;
+  const preview = image.url
+    ? `<img src="${escapeHtml(image.url)}" alt="" loading="lazy">`
+    : `<span class="gallery-image-unavailable">Imagem indisponível</span>`;
+  return `<button class="gallery-image-option ${selected ? "is-selected" : ""}" type="button"
+    data-gallery-image data-action="select-gallery-image" data-id="${escapeHtml(image.id)}" aria-pressed="${selected}">
+    ${preview}<span>${escapeHtml(image.filename)}</span></button>`;
+}
+
+function renderGalleryPicker(selectedId = "") {
+  const ownImages = data.galleryImages.filter((image) => image.owner === currentUser()?.id);
+  return `<section class="attack-gallery" aria-labelledby="attack-gallery-title">
+    <div class="panel-heading"><h4 id="attack-gallery-title">Galeria privada</h4>
+      <span class="form-hint">Imagens anexadas a este ataque ficam visíveis aos membros autorizados da campanha.</span></div>
+    <label class="gallery-upload"><span>Adicionar imagem à galeria (PNG, JPEG, WebP ou GIF; até 5 MB)</span>
+      <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" data-gallery-upload></label>
+    <button class="button button-outline" type="button" data-action="upload-gallery-image">Enviar para a galeria</button>
+    <input type="hidden" name="attackImageId" data-attack-image-id value="${escapeHtml(selectedId)}">
+    <div class="gallery-image-grid" data-gallery-items>
+      ${ownImages.map((image) => renderGalleryImageButton(image, selectedId)).join("")
+        || `<p class="empty-panel" data-gallery-empty>Sua galeria está vazia. Envie uma imagem para começar.</p>`}
+    </div>
+    <div class="attack-image-preview" data-attack-image-preview>
+      ${ownImages.find((image) => image.id === selectedId)?.url
+        ? `<img src="${escapeHtml(ownImages.find((image) => image.id === selectedId).url)}" alt="Imagem selecionada para o ataque">`
+        : `<span>Nenhuma imagem selecionada</span>`}
+    </div>
+  </section>`;
+}
+
+function renderAttackCard(attack, editable = false) {
+  const image = data.galleryImages.find((item) => item.id === attack.imageId);
+  const extraDamage = Array.isArray(attack.extraDamage)
+    ? attack.extraDamage.filter((extra) => extra && typeof extra === "object")
+    : [];
+  return `<article class="attack-card ${image?.url ? "has-image" : ""}" data-attack-id="${escapeHtml(attack.id)}">
+    ${image?.url ? `<img class="attack-card-image" src="${escapeHtml(image.url)}" alt="Imagem do ataque ${escapeHtml(attack.name)}" loading="lazy">` : ""}
+    <div class="attack-card-content"><div class="panel-heading"><h4>${escapeHtml(attack.name)}</h4>
+      <span class="status-chip">${escapeHtml(attack.damageType)}</span></div>
+      <p>${escapeHtml(attack.damage)}${extraDamage.length ? ` + ${extraDamage.map((extra) => escapeHtml(extra.formula)).join(" + ")}` : ""}
+        · crítico ${escapeHtml(attack.critical)}/${escapeHtml(attack.multiplier)}x · bônus ${escapeHtml(attack.attackBonus >= 0 ? `+${attack.attackBonus}` : attack.attackBonus)}</p>
+      <p class="form-hint">${escapeHtml(attack.range || "Alcance não informado")}${attack.skill ? ` · ${escapeHtml(attack.skill)}` : ""}
+        ${attack.damageAttribute ? ` · atributo de dano: ${escapeHtml(attack.damageAttribute)}` : ""}</p>
+      ${image && !image.url ? `<p class="form-hint">Imagem indisponível${image.error ? `: ${escapeHtml(image.error)}` : "."}</p>` : ""}
+      ${attack.notes ? `<div class="attack-notes">${sanitizeAttackNotes(attack.notes)}</div>` : ""}
+      <p class="attack-roll-result" role="status" aria-live="polite" data-attack-result></p>
+      <div class="form-actions"><button class="button button-outline" type="button" data-action="roll-attack"
+        data-bonus="${escapeHtml(attack.attackBonus)}" data-critical="${escapeHtml(attack.critical)}">Testar ataque</button>
+        ${editable ? `<button class="button button-outline" type="button" data-action="edit-character-attack" data-id="${escapeHtml(attack.id)}">Editar</button>
+          <button class="button button-outline" type="button" data-action="delete-character-attack" data-id="${escapeHtml(attack.id)}">Excluir</button>` : ""}</div>
+    </div>
+  </article>`;
+}
+
+function renderOrderCombatPanel(character, canEdit) {
+  const savedAttacks = storedCharacterAttacks(character?.fields?.Ataques);
+  const attackSection = canEdit
+    ? `<form class="form-panel attack-editor-form" data-form="character-attacks" data-system="ordem"
+        data-id="${escapeHtml(character.id)}" novalidate>
+        <input type="hidden" name="attacks" data-character-attacks value="${escapeHtml(JSON.stringify(savedAttacks))}">
+        <section class="attack-builder" aria-labelledby="attack-builder-title">
+          <div><p class="eyebrow">Ordem Paranormal</p><h3 id="attack-builder-title">Cadastrar ataque</h3>
+            <p class="form-hint">O teste rola somente 1d20 + bônus. O resultado não determina acerto nem rola dano.</p></div>
+          <div class="form-grid">
+            <label><span>Nome do ataque *</span><input name="attackName" maxlength="80" required></label>
+            <label><span>Dano *</span><input name="attackDamage" required pattern="\\d{1,2}d(?:4|6|8|10|12|20|100)(?:\\s*(?:\\+|-)\\s*\\d{1,3})?"
+              title="Use uma fórmula como 1d4 ou 2d6 + 3" placeholder="1d4"></label>
+            <label><span>Crítico (resultado natural mínimo)</span><input name="attackCritical" type="number" min="1" max="20" value="20" required></label>
+            <label><span>Multiplicador crítico</span><input name="attackMultiplier" type="number" min="1" max="10" value="2" required></label>
+            <label><span>Bônus de ataque</span><input name="attackBonus" type="number" min="-99" max="99" value="0" required></label>
+            <label><span>Tipo de dano</span><select name="attackDamageType" required>
+              <option value="">Selecione</option>${orderDamageTypes.map((type) => `<option value="${escapeHtml(type)}">${escapeHtml(type)}</option>`).join("")}
+            </select></label>
+            <label><span>Alcance</span><input name="attackRange" maxlength="80" placeholder="Ex.: curto"></label>
+            ${renderOrderSkillSelect("attackSkill", "Perícia *", "", true)}
+            <label><span>Atributo de dano *</span><select name="attackDamageAttribute" required>
+              <option value="">Selecione</option>${orderAttributes.map(({ name }) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join("")}
+            </select></label>
+          </div>
+          <section class="extra-damage-editor" aria-labelledby="extra-damage-title">
+            <div class="panel-heading"><h4 id="extra-damage-title">Dano extra</h4>
+              <button class="button button-outline" type="button" data-action="add-extra-damage">Adicionar dano extra</button></div>
+            <div class="extra-damage-list" data-extra-damage-list></div>
+          </section>
+          ${renderGalleryPicker()}
+          <section class="attack-notes-editor">
+            <h4>Anotações do ataque</h4>
+            <div class="rich-text-toolbar" role="toolbar" aria-label="Formatação das anotações">
+              <button class="button button-outline" type="button" data-action="format-attack-notes" data-command="bold" aria-label="Negrito"><strong>N</strong></button>
+              <button class="button button-outline" type="button" data-action="format-attack-notes" data-command="italic" aria-label="Itálico"><em>I</em></button>
+              <button class="button button-outline" type="button" data-action="format-attack-notes" data-command="underline" aria-label="Sublinhado"><u>S</u></button>
+            </div>
+            <div class="rich-text-editor" contenteditable="true" role="textbox" aria-label="Anotações do ataque" aria-multiline="true"
+              data-attack-notes></div>
+          </section>
+          <div class="form-actions"><button class="button button-outline" type="button" data-action="save-character-attack">Adicionar ataque</button>
+            <button class="button button-outline" type="button" data-action="cancel-character-attack" hidden>Cancelar edição</button></div>
+        </section>
+        <section class="attack-list-panel" aria-labelledby="attack-list-title"><div class="panel-heading"><h3 id="attack-list-title">Ataques cadastrados</h3></div>
+          <div class="list-stack" data-attack-list>${savedAttacks.map((attack) => renderAttackCard(attack, true)).join("")
+            || `<p class="empty-panel">Nenhum ataque cadastrado ainda.</p>`}</div></section>
+      </form>`
+    : `<section class="attack-list-panel" aria-labelledby="attack-list-title"><div class="panel-heading"><h3 id="attack-list-title">Ataques cadastrados</h3></div>
+        <div class="list-stack">${savedAttacks.map((attack) => renderAttackCard(attack)).join("")
+          || `<p class="empty-panel">Nenhum ataque cadastrado ainda.</p>`}</div></section>`;
+  return `<section class="character-tab-panel combat-tab-panel" id="character-panel-combate" role="tabpanel"
+    aria-labelledby="character-tab-combate" data-character-tab-panel="combate" hidden>
+    <div class="content-panel">
+      <div class="panel-heading"><div><p class="eyebrow">Combate</p><h2>Dados e ataques</h2></div></div>
+      ${renderCombatRoller()}
+      ${canEdit ? `<p class="form-hint">Você pode cadastrar ataques nesta ficha. Cada alteração é salva imediatamente.</p>` : ""}
+      ${attackSection}
+    </div>
+  </section>`;
+}
+
+function storedCharacterAttacks(value) {
+  return Array.isArray(value)
+    ? value.filter((attack) => attack && typeof attack === "object" && !Array.isArray(attack))
+    : [];
+}
+
+function characterAttacks(form) {
+  const parsed = JSON.parse(form.querySelector("[data-character-attacks]").value || "[]");
+  if (!Array.isArray(parsed)) throw new Error("Os ataques desta ficha não puderam ser carregados.");
+  return storedCharacterAttacks(parsed);
+}
+
+function renderCharacterAttackList(form) {
+  const attacks = characterAttacks(form);
+  form.querySelector("[data-attack-list]").innerHTML = attacks.map((attack) => renderAttackCard(attack, true)).join("")
+    || `<p class="empty-panel">Nenhum ataque cadastrado ainda.</p>`;
+}
+
+async function persistCharacterAttacks(form, attacks) {
+  const character = getCharacter(form.dataset.id);
+  if (!character || character.owner !== currentUser()?.id) {
+    throw new Error("Somente o proprietário pode alterar os ataques desta ficha.");
+  }
+  const fields = { ...(character.fields || {}), Ataques: attacks };
+  await apiRequest(`/characters/${character.id}`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      name: character.name,
+      system: character.system,
+      campaignId: character.campaignId || null,
+      fields,
+      notes: character.notes || ""
+    })
+  });
+  character.fields = fields;
+  form.querySelector("[data-character-attacks]").value = JSON.stringify(attacks);
+  renderCharacterAttackList(form);
+}
+
+function renderExtraDamageRow(extra = {}) {
+  return `<div class="extra-damage-row" data-extra-damage-row>
+    <label><span>Fórmula de dano</span><input data-extra-damage-formula required
+      pattern="\\d{1,2}d(?:4|6|8|10|12|20|100)(?:\\s*(?:\\+|-)\\s*\\d{1,3})?" title="Use uma fórmula como 1d4 ou 2d6 + 3"
+      placeholder="1d4" value="${escapeHtml(extra.formula || "")}"></label>
+    <label><span>Tipo</span><select data-extra-damage-type>
+      <option value="">Mesmo tipo do ataque</option>${orderDamageTypes.map((type) =>
+        `<option value="${escapeHtml(type)}" ${extra.type === type ? "selected" : ""}>${escapeHtml(type)}</option>`
+      ).join("")}
+    </select></label>
+    <button class="button button-outline" type="button" data-action="remove-extra-damage">Remover</button>
+  </div>`;
+}
+
+function setGalleryImage(form, imageId) {
+  const selected = data.galleryImages.find((image) =>
+    image.id === imageId && image.owner === currentUser()?.id
+  );
+  form.querySelector("[data-attack-image-id]").value = selected?.id || "";
+  form.querySelectorAll("[data-gallery-image]").forEach((button) => {
+    const isSelected = button.dataset.id === selected?.id;
+    button.classList.toggle("is-selected", isSelected);
+    button.setAttribute("aria-pressed", String(isSelected));
+  });
+  const preview = form.querySelector("[data-attack-image-preview]");
+  preview.innerHTML = selected?.url
+    ? `<img src="${escapeHtml(selected.url)}" alt="Imagem selecionada para o ataque">`
+    : `<span>${selected ? "Imagem indisponível" : "Nenhuma imagem selecionada"}</span>`;
+}
+
+function resetCharacterAttackEditor(form) {
+  const builder = form.querySelector(".attack-builder");
+  builder.dataset.editingAttack = "";
+  for (const name of ["attackName", "attackDamage", "attackRange"]) form.elements.namedItem(name).value = "";
+  form.elements.namedItem("attackCritical").value = "20";
+  form.elements.namedItem("attackMultiplier").value = "2";
+  form.elements.namedItem("attackBonus").value = "0";
+  form.elements.namedItem("attackDamageType").value = "";
+  form.elements.namedItem("attackSkill").value = "";
+  form.elements.namedItem("attackDamageAttribute").value = "";
+  form.querySelector("[data-extra-damage-list]").replaceChildren();
+  form.querySelector("[data-attack-notes]").innerHTML = "";
+  setGalleryImage(form, "");
+  form.querySelector('[data-action="save-character-attack"]').textContent = "Adicionar ataque";
+  form.querySelector('[data-action="cancel-character-attack"]').hidden = true;
+}
+
+function editCharacterAttack(form, attack) {
+  const builder = form.querySelector(".attack-builder");
+  builder.dataset.editingAttack = attack.id;
+  for (const [name, value] of [
+    ["attackName", attack.name],
+    ["attackDamage", attack.damage],
+    ["attackCritical", attack.critical],
+    ["attackMultiplier", attack.multiplier],
+    ["attackBonus", attack.attackBonus],
+    ["attackDamageType", attack.damageType],
+    ["attackRange", attack.range],
+    ["attackSkill", attack.skill],
+    ["attackDamageAttribute", attack.damageAttribute]
+  ]) form.elements.namedItem(name).value = value ?? "";
+  form.querySelector("[data-extra-damage-list]").innerHTML =
+    (Array.isArray(attack.extraDamage) ? attack.extraDamage.filter((extra) => extra && typeof extra === "object") : [])
+      .map(renderExtraDamageRow).join("");
+  form.querySelector("[data-attack-notes]").innerHTML = sanitizeAttackNotes(attack.notes);
+  setGalleryImage(form, attack.imageId || "");
+  form.querySelector('[data-action="save-character-attack"]').textContent = "Salvar ataque";
+  form.querySelector('[data-action="cancel-character-attack"]').hidden = false;
+  form.querySelector('[name="attackName"]').focus();
+}
+
+async function saveCharacterAttack(form) {
+  const builder = form.querySelector(".attack-builder");
+  const requiredInputs = [...builder.querySelectorAll("input[required], select[required]")];
+  const invalid = requiredInputs.find((input) => !input.checkValidity());
+  if (invalid) {
+    invalid.reportValidity();
+    return;
+  }
+  const extraRows = [...form.querySelectorAll("[data-extra-damage-row]")];
+  const invalidExtra = extraRows.flatMap((row) => [...row.querySelectorAll("input")]).find((input) => !input.checkValidity());
+  if (invalidExtra) {
+    invalidExtra.reportValidity();
+    return;
+  }
+  if (extraRows.length > 10) {
+    showPageNotice("Um ataque pode ter no máximo 10 danos extras.", true);
+    return;
+  }
+  const value = (name) => form.elements.namedItem(name).value.trim();
+  const attacks = characterAttacks(form);
+  const editingId = builder.dataset.editingAttack;
+  const attack = {
+    id: editingId || crypto.randomUUID(),
+    name: value("attackName"),
+    damage: value("attackDamage"),
+    critical: Number(value("attackCritical")),
+    multiplier: Number(value("attackMultiplier")),
+    attackBonus: Number(value("attackBonus")),
+    damageType: value("attackDamageType"),
+    range: value("attackRange"),
+    skill: value("attackSkill"),
+    damageAttribute: value("attackDamageAttribute"),
+    extraDamage: extraRows.map((row) => ({
+      formula: row.querySelector("[data-extra-damage-formula]").value.trim(),
+      type: row.querySelector("[data-extra-damage-type]").value
+    })),
+    imageId: value("attackImageId"),
+    notes: sanitizeAttackNotes(form.querySelector("[data-attack-notes]").innerHTML)
+  };
+  const existingIndex = attacks.findIndex((item) => item.id === editingId);
+  if (editingId && existingIndex < 0) throw new Error("Este ataque não está mais disponível para edição.");
+  if (existingIndex >= 0) attacks[existingIndex] = attack;
+  else attacks.push(attack);
+  await persistCharacterAttacks(form, attacks);
+  resetCharacterAttackEditor(form);
+  showPageNotice(editingId ? "Ataque atualizado e salvo na ficha." : "Ataque adicionado e salvo na ficha.");
+}
+
+function rollDie(sides) {
+  const values = new Uint32Array(1);
+  const range = 0x100000000 - (0x100000000 % sides);
+  do {
+    crypto.getRandomValues(values);
+  } while (values[0] >= range);
+  return (values[0] % sides) + 1;
+}
+
+async function uploadGalleryImage(form) {
+  const fileInput = form.querySelector("[data-gallery-upload]");
+  const file = fileInput.files[0];
+  if (!file) throw new Error("Escolha uma imagem antes de enviar.");
+  const extensions = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif" };
+  if (!extensions[file.type]) throw new Error("Use uma imagem PNG, JPEG, WebP ou GIF.");
+  if (file.size > 5 * 1024 * 1024) throw new Error("A imagem deve ter no máximo 5 MB.");
+  const user = currentUser();
+  if (!user) throw new Error("Entre na sua conta para enviar imagens.");
+
+  const client = requireSupabase();
+  const imageId = crypto.randomUUID();
+  const storagePath = `${user.id}/${imageId}.${extensions[file.type]}`;
+  const storage = client.storage.from("character-gallery");
+  const { error: uploadError } = await storage.upload(storagePath, file, {
+    contentType: file.type,
+    cacheControl: "3600",
+    upsert: false
+  });
+  supabaseFailure(uploadError, "Não foi possível enviar a imagem para a galeria.");
+
+  const { data: image, error: insertError } = await client.from("character_gallery_images").insert({
+    id: imageId,
+    owner_id: user.id,
+    storage_path: storagePath,
+    filename: file.name.trim().slice(0, 120) || `Imagem.${extensions[file.type]}`,
+    content_type: file.type
+  }).select("id,owner_id,storage_path,filename,content_type").single();
+  if (insertError) {
+    const { error: cleanupError } = await storage.remove([storagePath]);
+    const cleanupMessage = cleanupError ? ` A limpeza do arquivo também falhou: ${cleanupError.message}` : "";
+    throw new Error(`Não foi possível registrar a imagem na galeria: ${insertError.message}.${cleanupMessage}`);
+  }
+  const { data: signedImage, error: signError } = await storage.createSignedUrl(storagePath, 3600);
+  if (signError) {
+    const { error: deleteRowError } = await client.from("character_gallery_images").delete().eq("id", imageId);
+    const { error: cleanupError } = await storage.remove([storagePath]);
+    const cleanupErrors = [deleteRowError, cleanupError].filter(Boolean).map((error) => error.message);
+    throw new Error(`Não foi possível preparar a prévia da imagem: ${signError.message}${cleanupErrors.length ? ` Limpeza incompleta: ${cleanupErrors.join("; ")}` : ""}`);
+  }
+  data.galleryImages.push({
+    id: image.id,
+    owner: image.owner_id,
+    storagePath: image.storage_path,
+    filename: image.filename,
+    contentType: image.content_type,
+    url: signedImage.signedUrl
+  });
+  const gallery = form.querySelector("[data-gallery-items]");
+  gallery.innerHTML = data.galleryImages.filter((item) => item.owner === user.id)
+    .map((item) => renderGalleryImageButton(item, imageId)).join("");
+  setGalleryImage(form, imageId);
+  fileInput.value = "";
+  showPageNotice("Imagem enviada para sua galeria privada.");
+}
+
+function orderNexValue(value) {
+  const parsed = Number.parseInt(String(value || "5").replace("%", ""), 10);
+  return Number.isInteger(parsed) && (parsed === 99 || (parsed >= 5 && parsed <= 95 && parsed % 5 === 0)) ? parsed : 5;
+}
+
+function calculateOrderStats(classId, attributes, nex, customStats = {}) {
+  const classStats = orderClasses[classId] || customStats;
+  const steps = Math.max(0, Math.floor((nex - 5) / 5));
+  return {
+    hp: classStats.pv + attributes.VIG + steps * (classStats.pvPerNex + attributes.VIG),
+    pe: classStats.pe + attributes.PRE + steps * (classStats.pePerNex + attributes.PRE),
+    san: classStats.san + steps * classStats.sanPerNex,
+    defense: 10 + attributes.AGI,
+    ritualDifficulty: 11 + attributes.PRE,
+    carry: attributes.FOR === 0 ? 2 : 5 * attributes.FOR,
+    block: 0,
+    dodge: 10 + attributes.AGI
+  };
+}
+
+function renderOrderOriginCard(origin, selected = false) {
+  const searchText = [
+    origin.name,
+    origin.source,
+    origin.description,
+    origin.skillDisplay,
+    ...origin.skills,
+    origin.power,
+    origin.powerNotes
+  ].join(" ").toLocaleLowerCase("pt-BR");
+  return `<article class="order-origin-card ${selected ? "is-selected" : ""}" data-origin-card
+    data-origin-source="${escapeHtml(origin.source)}" data-origin-search="${escapeHtml(searchText)}"
+    data-origin-name="${escapeHtml(origin.name)}" data-origin-description="${escapeHtml(origin.description)}"
+    data-origin-skill1="${escapeHtml(origin.skills[0])}" data-origin-skill2="${escapeHtml(origin.skills[1])}"
+    data-origin-power="${escapeHtml(origin.power)}" data-origin-power-notes="${escapeHtml(origin.powerNotes)}"
+    data-origin-choice-count="${origin.choiceCount || 0}">
+    <div class="order-origin-card-heading">
+      <div><span class="order-origin-source">${escapeHtml(origin.source)}</span><h3>${escapeHtml(origin.name)}</h3></div>
+      <button type="button" class="button ${selected ? "button-primary" : "button-outline"}" data-action="select-character-origin"
+        aria-pressed="${selected}">${selected ? "Selecionada" : "Escolher"}</button>
+    </div>
+    <details class="order-origin-details"><summary>Ver detalhes</summary>
+      <p>${escapeHtml(origin.description || "Sem descrição cadastrada.")}</p>
+      <dl><div><dt>Perícias treinadas</dt><dd>${origin.choiceCount
+        ? `Duas perícias à escolha ${origin.choiceCount === 2 ? "do mestre" : ""}`
+        : escapeHtml(origin.skillDisplay || origin.skills.join(" · "))}</dd></div>
+        <div><dt>Poder de origem</dt><dd>${escapeHtml(origin.power || "Consulte o livro de referência.")}</dd></div></dl>
+      ${origin.powerNotes ? `<p>${escapeHtml(origin.powerNotes)}</p>` : ""}
+      ${origin.choiceCount ? `<div class="order-origin-choice-skills">
+        ${renderOrderSkillSelect("originChoice1", "Perícia escolhida 1 *", origin.skills[0], true, "data-origin-choice=\"0\"")}
+        ${renderOrderSkillSelect("originChoice2", "Perícia escolhida 2 *", origin.skills[1], true, "data-origin-choice=\"1\"")}
+      </div>` : ""}
+    </details>
+  </article>`;
+}
+
+function filterOrderOriginCards(form) {
+  const search = form.querySelector("[data-origin-search]");
+  let visibleCount = 0;
+  form.querySelectorAll("[data-origin-card]").forEach((card) => {
+    const matchesSearch = card.dataset.originSearch.includes(search.value.trim().toLocaleLowerCase("pt-BR"));
+    card.hidden = !matchesSearch;
+    if (!card.hidden) visibleCount += 1;
+  });
+  form.querySelector("[data-origin-empty]").hidden = visibleCount > 0;
+}
+
+function selectOrderOrigin(form, card) {
+  const choiceSelects = [...card.querySelectorAll("[data-origin-choice]")];
+  const skills = choiceSelects.length
+    ? choiceSelects.map((select) => select.value)
+    : [card.dataset.originSkill1, card.dataset.originSkill2];
+  const originFields = {
+    originName: card.dataset.originName,
+    originSource: card.dataset.originSource,
+    originDescription: card.dataset.originDescription,
+    originSkill1: skills[0],
+    originSkill2: skills[1],
+    originPower: card.dataset.originPower,
+    originPowerNotes: card.dataset.originPowerNotes
+  };
+  for (const [name, value] of Object.entries(originFields)) {
+    form.elements.namedItem(name).value = value;
+  }
+  form.dataset.selectedOrigin = "true";
+  form.dataset.selectedOriginChoiceCount = card.dataset.originChoiceCount || "0";
+  form.querySelectorAll("[data-origin-card]").forEach((originCard) => {
+    const selected = originCard === card;
+    originCard.classList.toggle("is-selected", selected);
+    const button = originCard.querySelector('[data-action="select-character-origin"]');
+    button.classList.toggle("button-primary", selected);
+    button.classList.toggle("button-outline", !selected);
+    button.setAttribute("aria-pressed", String(selected));
+    button.textContent = selected ? "Selecionada" : "Escolher";
+  });
+  if (choiceSelects.length) card.querySelector(".order-origin-details").open = true;
+  form.querySelector("[data-origin-selection-status]").textContent = `Origem selecionada: ${card.dataset.originName}.`;
+}
+
+function renderOrderCharacterForm(character, campaignId, draft = {}) {
+  const fields = character?.fields || {};
+  const field = (name, fallback = "") => fields[name] ?? fallback;
+  const selectedClass = field("Classe ID", "combatente");
+  const nex = orderNexValue(field("NEX", "5"));
+  const attributeDefaults = Object.fromEntries(orderAttributes.map(({ key, name }) => [key, Number(field(name, 1))]));
+  const skillCount = (classId, intellect, customCount = 0) => classId === "mundano"
+    ? customCount
+    : Math.min(10, (orderClasses[classId]?.skillCount || 0) + intellect);
+  const initialSkillCount = skillCount(selectedClass, attributeDefaults.INT, Number(field("Mundano perícias de classe", 0)));
+  const skillSlots = Array.from({ length: 10 }, (_, index) =>
+    `<div class="order-class-skill" data-order-skill-slot="${index}" ${index < initialSkillCount ? "" : "hidden"}>
+      ${renderOrderSkillSelect(`classSkill${index + 1}`, `Perícia de classe ${index + 1}`, field(`Perícia de classe ${index + 1}`), index < initialSkillCount, index < initialSkillCount ? "" : "disabled")}</div>`
+  ).join("");
+  const classOptions = [
+    ...Object.entries(orderClasses).map(([key, value]) => `<option value="${key}" ${selectedClass === key ? "selected" : ""}>${value.name}</option>`),
+    `<option value="mundano" ${selectedClass === "mundano" ? "selected" : ""}>Mundano · valores personalizados</option>`
+  ].join("");
+  const statSummary = calculateOrderStats(selectedClass, attributeDefaults, nex, {
+    pv: Number(field("Mundano PV inicial", 0)),
+    pvPerNex: Number(field("Mundano PV por NEX", 0)),
+    pe: Number(field("Mundano PE inicial", 0)),
+    pePerNex: Number(field("Mundano PE por NEX", 0)),
+    san: Number(field("Mundano SAN inicial", 0)),
+    sanPerNex: Number(field("Mundano SAN por NEX", 0))
+  });
+  const campaignSelection = character?.campaignId || campaignId || "";
+  const campaignOptions = availableCharacterCampaigns(character, "ordem").map((campaign) =>
+    `<option value="${campaign.id}" ${campaign.id === campaignSelection ? "selected" : ""}>${escapeHtml(campaign.name)}</option>`
+  ).join("");
+  const attributeInputs = orderAttributes.map(({ key, name }) => `<label class="order-attribute">
+    <span>${escapeHtml(name)} <small>${key}</small></span><input name="attribute${key}" type="number" min="0" max="3" step="1" required
+      value="${escapeHtml(attributeDefaults[key])}" aria-label="${escapeHtml(name)} (0 a 3)"></label>`).join("");
+  const mundanoStats = [
+    ["mundanoSkillCount", "Perícias treinadas pela classe", field("Mundano perícias de classe", 0)],
+    ["mundanoPV", "PV inicial", field("Mundano PV inicial", 0)],
+    ["mundanoPVPerNex", "PV a cada 5% de NEX", field("Mundano PV por NEX", 0)],
+    ["mundanoPE", "PE inicial", field("Mundano PE inicial", 0)],
+    ["mundanoPEPerNex", "PE a cada 5% de NEX", field("Mundano PE por NEX", 0)],
+    ["mundanoSAN", "SAN inicial", field("Mundano SAN inicial", 0)],
+    ["mundanoSANPerNex", "SAN a cada 5% de NEX", field("Mundano SAN por NEX", 0)]
+  ].map(([name, label, value]) => `<label><span>${label}</span><input name="${name}" type="number" min="0" max="${name === "mundanoSkillCount" ? "10" : "500"}" step="1" value="${escapeHtml(value)}"
+    data-mundano-stat ${selectedClass === "mundano" ? "required" : "disabled"}></label>`).join("");
+  const nexOptions = [...Array.from({ length: 19 }, (_, index) => 5 + index * 5), 99].map((value) =>
+    `<option value="${value}" ${nex === value ? "selected" : ""}>${value}%</option>`
+  ).join("");
+  const selectedOriginSkills = (field("Perícias da origem") || "").split(";").map((skill) => skill.trim());
+  const selectedOrigin = field("Origem") ? {
+    name: field("Origem"),
+    source: field("Fonte da origem", "Personalizada"),
+    description: field("Descrição da origem"),
+    skills: [field("Perícia de origem 1", selectedOriginSkills[0]), field("Perícia de origem 2", selectedOriginSkills[1])],
+    power: field("Poder da origem"),
+    powerNotes: field("Efeito do poder de origem"),
+    choiceCount: orderOriginCatalog.find((origin) => origin.name === field("Origem") && origin.source === field("Fonte da origem"))?.choiceCount || 0
+  } : null;
+  const selectedCatalogOrigin = selectedOrigin && orderOriginCatalog.some((origin) =>
+    origin.name === selectedOrigin.name && origin.source === selectedOrigin.source
+  );
+  const catalogOrigins = orderOriginCatalog.map((origin) =>
+    renderOrderOriginCard(selectedOrigin?.name === origin.name && selectedOrigin?.source === origin.source
+      ? { ...origin, skills: selectedOrigin.skills }
+      : origin, selectedOrigin?.name === origin.name && selectedOrigin?.source === origin.source)
+  ).join("");
+  const originCards = selectedOrigin && !selectedCatalogOrigin
+    ? `${renderOrderOriginCard(selectedOrigin, true)}${catalogOrigins}`
+    : catalogOrigins;
+
+  return pageLayout(`${pageHeader("Ordem Paranormal", character ? "Editar agente" : "Criar agente",
+    "Monte a ficha em quatro etapas. Os cálculos usam os valores de classe e progressão informados na referência; confirme as regras da sua mesa.",
+    routeLink("#fichas", "Cancelar"))}
+    <form class="content-panel form-panel order-character-form" data-form="character" data-system="ordem" data-id="${character?.id || ""}"
+      data-selected-origin="${selectedOrigin ? "true" : "false"}" novalidate>
+      ${renderSystemPicker("ordem", Boolean(character))}
+      <input type="hidden" name="attacks" value="${escapeHtml(JSON.stringify(storedCharacterAttacks(fields.Ataques)))}">
+      <label><span>Vincular a uma campanha</span><select name="campaignId"><option value="">Sem campanha</option>${campaignOptions}</select></label>
+      <p class="form-hint">Jogadores podem vincular uma ficha própria por campanha; para trocar, desvincule a atual. Mestres não têm esse limite.</p>
+      <nav class="order-creation-steps" aria-label="Etapas da criação da ficha">
+        ${["Atributos", "Origem", "Classe", "Toques finais"].map((label, index) =>
+          `<button type="button" class="order-step-button ${index === 0 ? "is-current" : ""}" data-action="character-step" data-step="${index}" aria-current="${index === 0 ? "step" : "false"}">
+            <span>${index + 1}</span>${label}</button>`
+        ).join("")}
+      </nav>
+      <section class="order-step-panel" data-order-step="0">
+        <div><p class="eyebrow">Etapa 1 de 4</p><h2>Atributos</h2>
+          <p>Comece com 1 em cada atributo e distribua 4 pontos. Você pode reduzir um atributo a 0 para ganhar 1 ponto adicional; nenhum atributo pode passar de 3.</p></div>
+        <div class="order-attributes-grid">${attributeInputs}</div>
+        <p class="order-points-remaining" role="status">Pontos disponíveis: <strong data-order-points-remaining>4</strong></p>
+        <div class="form-actions"><button type="button" class="button button-primary" data-action="character-step" data-step="1">Continuar para origem</button></div>
+      </section>
+      <section class="order-step-panel" data-order-step="1" hidden>
+        <div><p class="eyebrow">Etapa 2 de 4</p><h2>Origem</h2>
+          <p>Busque e escolha uma origem. Os detalhes são resumos para consulta; confirme a aplicação das regras com o mestre.</p></div>
+        <input type="hidden" name="originName" value="${escapeHtml(selectedOrigin?.name || "")}">
+        <input type="hidden" name="originSource" value="${escapeHtml(selectedOrigin?.source || "")}">
+        <input type="hidden" name="originDescription" value="${escapeHtml(selectedOrigin?.description || "")}">
+        <input type="hidden" name="originSkill1" value="${escapeHtml(selectedOrigin?.skills[0] || "")}">
+        <input type="hidden" name="originSkill2" value="${escapeHtml(selectedOrigin?.skills[1] || "")}">
+        <input type="hidden" name="originPower" value="${escapeHtml(selectedOrigin?.power || "")}">
+        <input type="hidden" name="originPowerNotes" value="${escapeHtml(selectedOrigin?.powerNotes || "")}">
+        <div class="order-origin-controls">
+          <label class="order-origin-search"><span>Buscar origem</span><input type="search" data-origin-search placeholder="Digite o nome ou uma perícia"></label>
+        </div>
+        <div class="order-origin-list" data-origin-list>${originCards}</div>
+        <p class="empty-panel" data-origin-empty hidden>Nenhuma origem corresponde à busca. Ajuste os filtros ou cadastre uma origem.</p>
+        <p class="form-hint" data-origin-selection-status role="status">${selectedOrigin ? `Origem selecionada: ${escapeHtml(selectedOrigin.name)}.` : "Escolha uma origem para continuar."}</p>
+        <details class="order-origin-builder">
+          <summary>Cadastrar origem para esta ficha</summary>
+          <p class="form-hint">O cadastro fica disponível neste assistente e na ficha criada. Informe as perícias e escreva um resumo próprio dos detalhes.</p>
+          <div class="form-grid">
+            <label><span>Nome da origem *</span><input name="originDraftName" required maxlength="80" placeholder="Nome da origem"></label>
+            <label><span>Fonte *</span><select name="originDraftSource" required>
+              <option value="Livro básico">Livro básico</option><option value="Marcas Fragmentadas">Marcas Fragmentadas</option>
+              <option value="Personalizada">Personalizada</option></select></label>
+            <label><span>Perícia treinada 1 *</span><select name="originDraftSkill1" required>${orderSkillOptions()}</select></label>
+            <label><span>Perícia treinada 2 *</span><select name="originDraftSkill2" required>${orderSkillOptions()}</select></label>
+            <label><span>Nome do poder de origem (opcional)</span><input name="originDraftPower" maxlength="100"></label>
+          </div>
+          <label class="full-field"><span>Descrição breve (opcional)</span><textarea name="originDraftDescription" rows="3" maxlength="1000"></textarea></label>
+          <label class="full-field"><span>Notas do poder (opcional)</span><textarea name="originDraftPowerNotes" rows="3" maxlength="1000" placeholder="Escreva um resumo próprio ou consulte o livro."></textarea></label>
+          <div class="form-actions"><button type="button" class="button button-outline" data-action="add-character-origin">Adicionar origem à lista</button></div>
+        </details>
+        <div class="form-actions"><button type="button" class="button button-outline" data-action="character-step" data-step="0">Voltar</button>
+          <button type="button" class="button button-primary" data-action="character-step" data-step="2">Continuar para classe</button></div>
+      </section>
+      <section class="order-step-panel" data-order-step="2" hidden>
+        <div><p class="eyebrow">Etapa 3 de 4</p><h2>Classe</h2>
+          <p>Os campos de perícias de classe se ajustam ao Intelecto. Para Mundano, informe os valores acordados com o mestre.</p></div>
+        <div class="form-grid">
+          <label><span>Classe *</span><select name="orderClass" required>${classOptions}</select></label>
+          <label data-order-fixed-skills ${selectedClass === "combatente" ? "" : "hidden"}>
+            <span>Escolha de perícia fixa 1 *</span><select name="fixedSkill1" ${selectedClass === "combatente" ? "required" : "disabled"}>
+              <option value="">Selecione</option><option value="Luta" ${field("Perícia fixa 1") === "Luta" ? "selected" : ""}>Luta</option>
+              <option value="Pontaria" ${field("Perícia fixa 1") === "Pontaria" ? "selected" : ""}>Pontaria</option></select></label>
+          <label data-order-fixed-skills ${selectedClass === "combatente" ? "" : "hidden"}>
+            <span>Escolha de perícia fixa 2 *</span><select name="fixedSkill2" ${selectedClass === "combatente" ? "required" : "disabled"}>
+              <option value="">Selecione</option><option value="Fortitude" ${field("Perícia fixa 2") === "Fortitude" ? "selected" : ""}>Fortitude</option>
+              <option value="Reflexos" ${field("Perícia fixa 2") === "Reflexos" ? "selected" : ""}>Reflexos</option></select></label>
+        </div>
+        <p class="form-hint" data-order-occultist-skills ${selectedClass === "ocultista" ? "" : "hidden"}>Ocultismo e Vontade são adicionadas automaticamente para Ocultista.</p>
+        <div class="form-grid order-mundano-fields" data-order-mundano-fields ${selectedClass === "mundano" ? "" : "hidden"}>${mundanoStats}</div>
+        <div class="order-class-skills"><h3>Perícias treinadas pela classe</h3><div class="form-grid">${skillSlots}</div></div>
+        <div class="form-actions"><button type="button" class="button button-outline" data-action="character-step" data-step="1">Voltar</button>
+          <button type="button" class="button button-primary" data-action="character-step" data-step="3">Continuar para os detalhes</button></div>
+      </section>
+      <section class="order-step-panel" data-order-step="3" hidden>
+        <div><p class="eyebrow">Etapa 4 de 4</p><h2>Toques finais</h2>
+          <p>Revise os valores calculados e complete a descrição do agente.</p></div>
+        <div class="form-grid">
+          <label><span>Nome do personagem *</span><input name="name" required maxlength="80" value="${escapeHtml(character?.name || draft.name || "")}"></label>
+          <label><span>Jogador</span><input name="playerName" maxlength="80" value="${escapeHtml(field("Jogador", currentUser().name))}"></label>
+          <label><span>NEX</span><select name="nex">${nexOptions}</select></label>
+          <label><span>PV atual</span><input name="currentPV" type="number" min="0" step="1" value="${escapeHtml(field("PV atual"))}"
+            data-order-current data-saved-value="${field("PV atual") === "" ? "false" : "true"}"></label>
+          <label><span>PE atual</span><input name="currentPE" type="number" min="0" step="1" value="${escapeHtml(field("PE atual"))}"
+            data-order-current data-saved-value="${field("PE atual") === "" ? "false" : "true"}"></label>
+          <label><span>Sanidade atual</span><input name="currentSAN" type="number" min="0" step="1" value="${escapeHtml(field("SAN atual"))}"
+            data-order-current data-saved-value="${field("SAN atual") === "" ? "false" : "true"}"></label>
+        </div>
+        <div class="order-stat-summary" aria-live="polite">
+          <h3>Resumo calculado</h3><dl>
+            <div><dt>PV máximo</dt><dd data-order-stat="hp">${statSummary.hp}</dd></div>
+            <div><dt>PE máximo</dt><dd data-order-stat="pe">${statSummary.pe}</dd></div>
+            <div><dt>Sanidade máxima</dt><dd data-order-stat="san">${statSummary.san}</dd></div>
+            <div><dt>Defesa sem proteção</dt><dd data-order-stat="defense">${statSummary.defense}</dd></div>
+            <div><dt>DT de rituais</dt><dd data-order-stat="ritualDifficulty">${statSummary.ritualDifficulty}</dd></div>
+            <div><dt>Carga máxima</dt><dd data-order-stat="carry">${statSummary.carry} espaços</dd></div>
+            <div><dt>Bloqueio (Fortitude treinada)</dt><dd data-order-stat="block">5</dd></div>
+            <div><dt>Esquiva (Reflexos treinados)</dt><dd data-order-stat="dodge">${statSummary.dodge}</dd></div>
+          </dl><p class="form-hint">Defesa não considera proteção ou bônus. Progressão de poderes, trilhas, rituais e perícias veteranas/expert deve ser conferida e registrada conforme as regras da mesa.</p>
+        </div>
+        <div class="form-grid">
+          <label><span>Aparência</span><textarea name="appearance" rows="3" maxlength="1000">${escapeHtml(field("Aparência"))}</textarea></label>
+          <label><span>Personalidade</span><textarea name="personality" rows="3" maxlength="1000">${escapeHtml(field("Personalidade"))}</textarea></label>
+          <label><span>Histórico</span><textarea name="background" rows="3" maxlength="2000">${escapeHtml(field("Histórico"))}</textarea></label>
+          <label><span>Objetivo</span><textarea name="objective" rows="3" maxlength="1000">${escapeHtml(field("Objetivo"))}</textarea></label>
+        </div>
+        <label class="full-field"><span>Anotações</span><textarea name="notes" rows="3" maxlength="5000">${escapeHtml(character?.notes || draft.notes || "")}</textarea></label>
+        <div class="form-actions"><button type="button" class="button button-outline" data-action="character-step" data-step="2">Voltar</button>
+          <button class="button button-primary" type="submit">${character ? "Salvar agente" : "Finalizar e criar agente"}</button></div>
+      </section>
+    </form>`);
+}
+
+const systemTaglines = {
+  dnd: "Fantasia heroica clássica",
+  tormenta: "Fantasia épica em Arton",
+  ordem: "Investigação paranormal"
+};
+const classicAttributes = [
+  { key: "FOR", name: "Força" },
+  { key: "DES", name: "Destreza" },
+  { key: "CON", name: "Constituição" },
+  { key: "INT", name: "Inteligência" },
+  { key: "SAB", name: "Sabedoria" },
+  { key: "CAR", name: "Carisma" }
+];
+const classicSheetSystems = {
+  dnd: {
+    sheetLabel: "Ficha de aventureiro",
+    identity: [
+      { field: "Classe", label: "Classe", placeholder: "Ex.: Guerreiro, Maga" },
+      { field: "Nível", label: "Nível", type: "number", min: 1, max: 20, value: "1" },
+      { field: "Raça", label: "Raça / espécie", placeholder: "Ex.: Anão, Elfa" },
+      { field: "Antecedente", label: "Antecedente", placeholder: "Ex.: Sábio, Soldado" },
+      {
+        field: "Alinhamento",
+        label: "Alinhamento",
+        options: ["Leal e bom", "Neutro e bom", "Caótico e bom", "Leal e neutro", "Neutro",
+          "Caótico e neutro", "Leal e mau", "Neutro e mau", "Caótico e mau"]
+      }
+    ],
+    attributeMode: "score",
+    attributeDefault: "10",
+    attributeMin: 1,
+    attributeMax: 30,
+    attributeHint: "Informe o valor de cada atributo. O modificador é calculado automaticamente: (valor − 10) ÷ 2, arredondado para baixo.",
+    combat: [
+      { field: "PV máximo", label: "PV máximo", type: "number", min: 0, legacy: "Pontos de vida" },
+      { field: "PV atual", label: "PV atual", type: "number", min: 0 },
+      { field: "Classe de Armadura", label: "Classe de Armadura (CA)", type: "number", min: 0 },
+      { field: "Deslocamento", label: "Deslocamento", placeholder: "Ex.: 9 m" },
+      { field: "Espaços de magia", label: "Espaços de magia", placeholder: "Ex.: 1º círculo: 4 · 2º círculo: 2", wide: true }
+    ],
+    resources: [{ label: "Pontos de vida", current: "PV atual", maximum: "PV máximo", color: "#c84c4c" }],
+    details: ["Classe de Armadura", "Deslocamento", "Antecedente", "Alinhamento", "Espaços de magia"]
+  },
+  tormenta: {
+    sheetLabel: "Ficha de herói",
+    identity: [
+      { field: "Raça", label: "Raça", placeholder: "Ex.: Humano, Minotauro" },
+      { field: "Classe", label: "Classe", placeholder: "Ex.: Arcanista, Guerreiro" },
+      { field: "Nível", label: "Nível", type: "number", min: 1, max: 20, value: "1" },
+      { field: "Origem", label: "Origem", placeholder: "Ex.: Acólito, Soldado" },
+      { field: "Divindade", label: "Divindade", placeholder: "Opcional" }
+    ],
+    attributeMode: "value",
+    attributeDefault: "0",
+    attributeMin: -10,
+    attributeMax: 30,
+    attributeHint: "Informe o valor de cada atributo como ele aparece na sua ficha. Confira com o mestre a edição de Tormenta20 usada na mesa.",
+    combat: [
+      { field: "PV máximo", label: "PV máximo", type: "number", min: 0, legacy: "Pontos de vida" },
+      { field: "PV atual", label: "PV atual", type: "number", min: 0 },
+      { field: "PM máximo", label: "PM máximo", type: "number", min: 0, legacy: "PM" },
+      { field: "PM atual", label: "PM atual", type: "number", min: 0 },
+      { field: "Defesa", label: "Defesa", type: "number", min: 0 },
+      { field: "Deslocamento", label: "Deslocamento", placeholder: "Ex.: 9 m" }
+    ],
+    resources: [
+      { label: "Pontos de vida", current: "PV atual", maximum: "PV máximo", color: "#c84c4c" },
+      { label: "Pontos de mana", current: "PM atual", maximum: "PM máximo", color: "#5f8fe0" }
+    ],
+    details: ["Defesa", "Deslocamento", "Origem", "Divindade"]
+  }
+};
+
+function classicFieldSpecs(system) {
+  const config = classicSheetSystems[system];
+  return [
+    ...config.identity,
+    ...classicAttributes.map(({ name }) => ({ field: name, value: config.attributeDefault })),
+    ...config.combat
+  ];
+}
+
+function classicFieldValues(system, fields = {}) {
+  return Object.fromEntries(classicFieldSpecs(system).map((spec) => [spec.field,
+    String(fields[spec.field] ?? (spec.legacy ? fields[spec.legacy] : undefined) ?? spec.value ?? "")]));
+}
+
+function formatModifier(value) {
+  return value >= 0 ? `+${value}` : `−${Math.abs(value)}`;
+}
+
+function classicAttributeModifier(score) {
+  const value = Number.parseInt(score, 10);
+  return Number.isFinite(value) ? Math.floor((value - 10) / 2) : null;
+}
+
+function dndProficiencyBonus(level) {
+  const value = Number.parseInt(level, 10);
+  return Number.isInteger(value) && value >= 1 && value <= 20 ? Math.ceil(value / 4) + 1 : null;
+}
+
+function classicSubtitle(values) {
+  const level = values["Nível"] ? `nível ${values["Nível"]}` : "";
+  const role = [values["Classe"], level].filter(Boolean).join(" · ");
+  return [values["Raça"], role].filter(Boolean).join(" · ") || "Classe e nível ainda não definidos";
+}
+
+function renderSystemPicker(selectedSystem, locked) {
+  if (locked) {
+    return `<input type="hidden" name="system" value="${escapeHtml(selectedSystem)}">
+      <p class="system-locked"><span class="system-label system-${escapeHtml(selectedSystem)}">${escapeHtml(getSystemName(selectedSystem))}</span>
+        O sistema não pode ser alterado depois que a ficha é criada.</p>`;
+  }
+  return `<fieldset class="system-picker">
+    <legend>Escolha o sistema</legend>
+    <div class="system-picker-options">
+      ${Object.entries(systems).map(([key, value]) => `<label class="system-option system-option-${key}">
+        <input type="radio" name="system" value="${key}" ${key === selectedSystem ? "checked" : ""} required>
+        <span class="system-option-mark" aria-hidden="true">${{ dnd: "D&D", tormenta: "T20", ordem: "OP" }[key]}</span>
+        <span class="system-option-text"><strong>${escapeHtml(value.name)}</strong><small>${escapeHtml(systemTaglines[key])}</small></span>
+      </label>`).join("")}
+    </div>
+  </fieldset>`;
+}
+
+function renderClassicInput(spec, value) {
+  const name = `field:${spec.field}`;
+  const control = spec.options
+    ? `<select name="${escapeHtml(name)}"><option value="">Não definido</option>
+        ${spec.options.map((option) => `<option ${option === value ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}
+        ${value && !spec.options.includes(value) ? `<option selected>${escapeHtml(value)}</option>` : ""}</select>`
+    : `<input name="${escapeHtml(name)}" type="${spec.type || "text"}" value="${escapeHtml(value)}"
+        ${spec.type === "number" ? `inputmode="numeric" step="1"` : `maxlength="${spec.wide ? 160 : 80}"`}
+        ${spec.min !== undefined ? `min="${spec.min}"` : ""} ${spec.max !== undefined ? `max="${spec.max}"` : ""}
+        ${spec.placeholder ? `placeholder="${escapeHtml(spec.placeholder)}"` : ""}>`;
+  return `<label class="${spec.wide ? "wide-field" : ""}"><span>${escapeHtml(spec.label)}</span>${control}</label>`;
+}
+
+function renderClassicPreview(system, name, values) {
+  const config = classicSheetSystems[system];
+  const resources = config.resources.map(({ label, current, maximum }) =>
+    `<div><dt>${label}</dt><dd>${escapeHtml(values[current] || "—")}<span> / ${escapeHtml(values[maximum] || "—")}</span></dd></div>`).join("");
+  const defense = system === "dnd" ? ["CA", values["Classe de Armadura"]] : ["Defesa", values.Defesa];
+  return `<span class="system-label system-${system}">${escapeHtml(getSystemName(system))}</span>
+    <h2>${escapeHtml(name || "Personagem sem nome")}</h2>
+    <p class="classic-preview-subtitle">${escapeHtml(classicSubtitle(values))}</p>
+    <div class="classic-preview-attributes">
+      ${classicAttributes.map(({ key, name: attributeName }) => {
+        const modifier = config.attributeMode === "score" ? classicAttributeModifier(values[attributeName]) : null;
+        return `<div><span>${key}</span><strong>${escapeHtml(values[attributeName] || "—")}</strong>
+          ${modifier !== null ? `<small>${formatModifier(modifier)}</small>` : ""}</div>`;
+      }).join("")}
+    </div>
+    <dl class="classic-preview-stats">
+      ${resources}
+      <div><dt>${defense[0]}</dt><dd>${escapeHtml(defense[1] || "—")}</dd></div>
+      ${system === "dnd" && dndProficiencyBonus(values["Nível"]) !== null
+        ? `<div><dt>Proficiência</dt><dd>${formatModifier(dndProficiencyBonus(values["Nível"]))}</dd></div>` : ""}
+    </dl>`;
+}
+
+function renderClassicCharacterForm(character, campaignId, selectedSystem, draft = {}) {
+  const config = classicSheetSystems[selectedSystem];
+  const values = classicFieldValues(selectedSystem, character?.fields);
+  const name = character?.name || draft.name || "";
+  const notes = character?.notes || draft.notes || "";
+  const selectedCampaign = character?.campaignId || campaignId;
+  const attributeCards = classicAttributes.map(({ key, name: attributeName }) => {
+    const modifier = config.attributeMode === "score" ? classicAttributeModifier(values[attributeName]) : null;
+    return `<label class="classic-attribute">
+      <span class="classic-attribute-heading"><span>${attributeName}</span><small>${key}</small></span>
+      <input type="number" name="field:${attributeName}" min="${config.attributeMin}" max="${config.attributeMax}" step="1"
+        inputmode="numeric" required value="${escapeHtml(values[attributeName])}" aria-label="${attributeName}">
+      ${modifier !== null ? `<output class="classic-attribute-modifier" data-attribute-modifier="${attributeName}">${formatModifier(modifier)}</output>` : ""}
+    </label>`;
+  }).join("");
+  const proficiency = dndProficiencyBonus(values["Nível"]);
+
+  return pageLayout(`${pageHeader("Ficha de personagem", character ? "Editar ficha" : "Criar ficha",
+    "Preencha as seções abaixo. A prévia ao lado mostra como a ficha vai ficar; confirme as regras com o mestre antes de jogar.",
+    routeLink("#fichas", "Cancelar"))}
+    <form class="content-panel form-panel classic-character-form system-theme-${selectedSystem}" data-form="character"
+      data-system-classic="${selectedSystem}" data-id="${character?.id || ""}">
+      ${renderSystemPicker(selectedSystem, Boolean(character))}
+      <div class="classic-layout">
+        <div class="classic-sections">
+          <section class="classic-section" aria-labelledby="classic-identity-title">
+            <h2 id="classic-identity-title"><span aria-hidden="true">1</span>Identidade</h2>
+            <div class="form-grid">
+              <label class="wide-field"><span>Nome do personagem *</span>
+                <input name="name" required maxlength="80" value="${escapeHtml(name)}" placeholder="Como o grupo vai chamar você?"></label>
+              ${config.identity.map((spec) => renderClassicInput(spec, values[spec.field])).join("")}
+              <label class="wide-field"><span>Campanha</span><select name="campaignId"><option value="">Sem campanha</option>
+                ${availableCharacterCampaigns(character, selectedSystem).map((campaign) => `<option value="${campaign.id}"
+                  ${campaign.id === selectedCampaign ? "selected" : ""}>${escapeHtml(campaign.name)}</option>`).join("")}
+              </select></label>
+            </div>
+            <p class="form-hint">Só aparecem campanhas de ${escapeHtml(getSystemName(selectedSystem))}. Jogadores podem vincular uma ficha própria por campanha; mestres não têm esse limite.</p>
+          </section>
+          <section class="classic-section" aria-labelledby="classic-attributes-title">
+            <h2 id="classic-attributes-title"><span aria-hidden="true">2</span>Atributos</h2>
+            <p class="form-hint">${escapeHtml(config.attributeHint)}</p>
+            <div class="classic-attributes-grid">${attributeCards}</div>
+          </section>
+          <section class="classic-section" aria-labelledby="classic-combat-title">
+            <h2 id="classic-combat-title"><span aria-hidden="true">3</span>Combate e recursos</h2>
+            <div class="form-grid">
+              ${config.combat.map((spec) => renderClassicInput(spec, values[spec.field])).join("")}
+              ${selectedSystem === "dnd" ? `<div class="classic-derived wide-field" aria-live="polite">
+                <span>Bônus de proficiência</span><strong data-proficiency>${proficiency === null ? "—" : formatModifier(proficiency)}</strong>
+                <small>Calculado pelo nível do personagem.</small></div>` : ""}
+            </div>
+          </section>
+          <section class="classic-section" aria-labelledby="classic-notes-title">
+            <h2 id="classic-notes-title"><span aria-hidden="true">4</span>Anotações</h2>
+            <label class="full-field"><span>Observações da ficha</span>
+              <textarea name="notes" rows="5" maxlength="5000" placeholder="Equipamentos, magias, perícias, aparência, história…">${escapeHtml(notes)}</textarea></label>
+          </section>
+          <div class="form-actions">${routeLink("#fichas", "Cancelar")}
+            <button class="button button-primary" type="submit">${character ? "Salvar alterações" : "Criar ficha"}</button></div>
+        </div>
+        <aside class="classic-preview" aria-label="Prévia da ficha">
+          <p class="eyebrow">Prévia</p>
+          <div data-classic-preview>${renderClassicPreview(selectedSystem, name, values)}</div>
+        </aside>
+      </div>
+    </form>`);
+}
+
+function readClassicFormValues(form) {
+  const values = {};
+  for (const [key, value] of new FormData(form).entries()) {
+    if (key.startsWith("field:")) values[key.slice(6)] = String(value).trim();
+  }
+  return values;
+}
+
+function updateClassicCharacterForm(form) {
+  const system = form.dataset.systemClassic;
+  if (!classicSheetSystems[system]) return;
+  const values = readClassicFormValues(form);
+  form.querySelectorAll("[data-attribute-modifier]").forEach((output) => {
+    const modifier = classicAttributeModifier(values[output.dataset.attributeModifier]);
+    output.textContent = modifier === null ? "—" : formatModifier(modifier);
+  });
+  const proficiencyOutput = form.querySelector("[data-proficiency]");
+  if (proficiencyOutput) {
+    const proficiency = dndProficiencyBonus(values["Nível"]);
+    proficiencyOutput.textContent = proficiency === null ? "—" : formatModifier(proficiency);
+  }
+  const preview = form.querySelector("[data-classic-preview]");
+  if (preview) preview.innerHTML = renderClassicPreview(system, form.elements.namedItem("name").value.trim(), values);
+}
+
+function buildClassicCharacterFields(form, character) {
+  const system = form.dataset.systemClassic;
+  const specs = classicFieldSpecs(system);
+  const replacedKeys = new Set(specs.flatMap((spec) => [spec.field, spec.legacy].filter(Boolean)));
+  const preserved = Object.fromEntries(Object.entries(character?.fields || {})
+    .filter(([key]) => !replacedKeys.has(key)));
+  return { ...preserved, ...readClassicFormValues(form) };
+}
+
+function renderClassicCharacterSheet(character, campaign) {
+  const system = character.system;
+  const config = classicSheetSystems[system];
+  const fields = character.fields || {};
+  const values = classicFieldValues(system, fields);
+  const knownKeys = new Set(classicFieldSpecs(system).flatMap((spec) => [spec.field, spec.legacy].filter(Boolean)));
+  const otherFields = Object.entries(fields).filter(([key, value]) => !knownKeys.has(key) && value !== "");
+  const resources = config.resources.map(({ label, current, maximum, color }) => {
+    const currentValue = Number(values[current]);
+    const maximumValue = Number(values[maximum]);
+    const hasValues = values[current] !== "" && values[maximum] !== "" && maximumValue > 0;
+    const percentage = hasValues ? Math.max(0, Math.min(100, currentValue / maximumValue * 100)) : 0;
+    return `<article class="order-sheet-resource" style="--resource-color:${color}">
+      <div class="order-sheet-resource-heading"><h3>${label}</h3>
+        <strong>${escapeHtml(values[current] || "—")}<span> / ${escapeHtml(values[maximum] || "—")}</span></strong></div>
+      <progress value="${percentage}" max="100" aria-label="${label}: ${escapeHtml(values[current] || "—")} de ${escapeHtml(values[maximum] || "—")}"></progress>
+    </article>`;
+  }).join("");
+  const proficiency = system === "dnd" ? dndProficiencyBonus(values["Nível"]) : null;
+  const details = [
+    ...config.details.map((key) => [key, values[key]]),
+    ...(proficiency !== null ? [["Bônus de proficiência", formatModifier(proficiency)]] : [])
+  ].map(([label, value]) => `<div class="order-sheet-detail"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value || "—")}</strong></div>`).join("");
+
+  return `<div class="order-sheet classic-sheet system-theme-${system}">
+    <section class="content-panel order-sheet-overview" aria-label="Resumo do personagem">
+      <div class="order-sheet-identity">
+        <p class="eyebrow">${config.sheetLabel} · ${escapeHtml(getSystemName(system))}</p>
+        <h2>${escapeHtml(character.name)}</h2>
+        <p>${escapeHtml(classicSubtitle(values))}</p>
+      </div>
+      <div class="order-sheet-meta">
+        ${campaign ? `<div class="order-sheet-detail"><span>Campanha</span><strong>${escapeHtml(campaign.name)}</strong></div>` : ""}
+      </div>
+    </section>
+    <section class="order-sheet-resources classic-sheet-resources" aria-label="Recursos">${resources}</section>
+    <section class="content-panel order-sheet-panel">
+      <div class="panel-heading"><h2>Atributos</h2></div>
+      <div class="classic-sheet-attributes">${classicAttributes.map(({ key, name }) => {
+        const modifier = config.attributeMode === "score" ? classicAttributeModifier(values[name]) : null;
+        return `<div class="classic-sheet-attribute"><span>${escapeHtml(name)}</span><small>${key}</small>
+          <strong>${escapeHtml(values[name] || "—")}</strong>${modifier !== null ? `<em>${formatModifier(modifier)}</em>` : ""}</div>`;
+      }).join("")}</div>
+    </section>
+    <div class="classic-sheet-columns">
+      <section class="content-panel order-sheet-panel">
+        <div class="panel-heading"><h2>Combate e detalhes</h2></div>
+        <div class="order-sheet-details">${details}</div>
+      </section>
+      ${otherFields.length ? `<section class="content-panel order-sheet-panel">
+        <div class="panel-heading"><h2>Outros campos</h2></div>
+        <div class="order-sheet-details">${otherFields.map(([name, value]) => `<div class="order-sheet-detail">
+          <span>${escapeHtml(name)}</span><strong>${escapeHtml(typeof value === "string" ? value : JSON.stringify(value))}</strong></div>`).join("")}</div>
+      </section>` : ""}
+      <section class="content-panel order-sheet-panel">
+        <div class="panel-heading"><h2>Observações</h2></div>
+        ${character.notes ? `<p class="order-sheet-notes">${escapeHtml(character.notes)}</p>` : `<p class="empty-panel">Nenhuma observação registrada.</p>`}
+      </section>
+    </div>
+  </div>`;
+}
+
+function renderCharacterForm(id, campaignId, draft = {}) {
   const character = id && id !== "nova" ? getCharacter(id) : null;
   const user = currentUser();
   if (character && character.owner !== user.id) {
     return pageLayout(`<section class="access-card"><h1>Ficha indisponível</h1><p>Você só pode editar fichas próprias.</p>${routeLink("#painel", "Voltar ao painel")}</section>`);
   }
+  if (!character && data.characters.filter((entry) => entry.owner === user.id).length >= maxCharactersPerUser) {
+    return pageLayout(`<section class="access-card"><h1>Limite de fichas atingido</h1>
+      <p>Você já possui 15 fichas. Exclua uma ficha antes de criar outra.</p>${routeLink("#fichas", "Gerenciar fichas")}</section>`);
+  }
   const linkedCampaign = campaignId ? getCampaign(campaignId) : null;
-  const selectedSystem = character?.system || linkedCampaign?.system || "dnd";
-  const fields = character?.fields || {};
-  const sys = systems[selectedSystem];
-  return pageLayout(`${pageHeader("Ficha de personagem", character ? "Editar ficha" : "Criar ficha", "Os campos do sistema são exemplos de interface; confirme edição e regras antes de usar em jogo.", routeLink("#painel", "Cancelar"))}
-    <form class="content-panel form-panel" data-form="character" data-id="${character?.id || ""}">
-      <div class="form-grid">
-        <label><span>Nome do personagem *</span><input name="name" required value="${escapeHtml(character?.name || "")}"></label>
-        <label><span>Sistema *</span><select name="system" required>
-          ${Object.entries(systems).map(([key, value]) => `<option value="${key}" ${key === selectedSystem ? "selected" : ""}>${escapeHtml(value.name)}</option>`).join("")}
-        </select></label>
-        <label><span>Campanha</span><select name="campaignId"><option value="">Sem campanha</option>
-          ${data.campaigns.filter((campaign) => canAccessCampaign(campaign)).map((campaign) => `<option value="${campaign.id}" ${campaign.id === (character?.campaignId || campaignId) ? "selected" : ""}>${escapeHtml(campaign.name)}</option>`).join("")}
-        </select></label>
-        <label><span>${escapeHtml(sys.extra)}</span><input name="extra" value="${escapeHtml(fields[sys.extra] || "")}" placeholder="Ex.: atributo do personagem"></label>
-        <label><span>Pontos de vida (exemplo)</span><input name="hp" type="number" min="0" value="${escapeHtml(fields["Pontos de vida"] || "")}" placeholder="0"></label>
-        <label><span>${escapeHtml(sys.resource)} (exemplo)</span><input name="resource" value="${escapeHtml(fields[sys.resource] || "")}" placeholder="Campo ilustrativo"></label>
-      </div>
-      <label class="full-field"><span>Observações da ficha</span><textarea name="notes" rows="4" placeholder="Notas pessoais">${escapeHtml(character?.notes || "")}</textarea></label>
-      <div class="form-actions"><button class="button button-primary" type="submit">${character ? "Salvar alterações" : "Criar ficha"}</button></div>
-    </form>`);
+  const selectedSystem = character?.system || draft.system || linkedCampaign?.system || "dnd";
+  if (selectedSystem === "ordem") return renderOrderCharacterForm(character, campaignId, draft);
+  return renderClassicCharacterForm(character, campaignId, classicSheetSystems[selectedSystem] ? selectedSystem : "dnd", draft);
 }
 
-function renderCharacter(id) {
+function renderOrderCharacterSheet(character, campaign, options = {}) {
+  const fields = character.fields || {};
+  const value = (name, fallback = "—") => fields[name] === undefined || fields[name] === ""
+    ? fallback
+    : String(fields[name]);
+  const attributes = orderAttributes.map(({ key, name }) => ({
+    key,
+    name,
+    value: value(name)
+  }));
+  const trainedSkills = new Set(
+    (fields["Perícias treinadas"] || "")
+      .split(/\r?\n/)
+      .map((skill) => skill.replace(/\s*\(\+5 base\)$/, "").trim())
+      .filter(Boolean)
+  );
+  const skillRows = orderSkills.map((skill) => `<li class="order-sheet-skill ${trainedSkills.has(skill.name) ? "is-trained" : ""}">
+    <span class="order-sheet-skill-name">${escapeHtml(skill.name)}</span>
+    <span class="order-sheet-skill-attribute">${skill.attribute}</span>
+    <span class="order-sheet-skill-training">${trainedSkills.has(skill.name) ? "Treinada · +5 base" : "Sem treino"}</span>
+    ${skill.loadPenalty ? `<span class="order-sheet-skill-note">Penalidade de carga</span>` : ""}
+  </li>`).join("");
+  const resource = (label, currentName, maximumName, inputName, color) => {
+    const current = Number(fields[currentName]);
+    const maximum = Number(fields[maximumName]);
+    const hasValues = Number.isFinite(current) && Number.isFinite(maximum) && maximum > 0;
+    const percentage = hasValues ? Math.max(0, Math.min(100, current / maximum * 100)) : 0;
+    return `<article class="order-sheet-resource" style="--resource-color:${color}">
+      <div class="order-sheet-resource-heading"><h3>${label}</h3>
+        <strong>${escapeHtml(value(currentName))}<span> / ${escapeHtml(value(maximumName))}</span></strong></div>
+      ${canEditResources ? `<label class="order-sheet-resource-input"><span>Valor atual</span>
+        <input type="number" name="${inputName}" min="0" max="${maximum}" step="1" required
+          value="${escapeHtml(value(currentName, "0"))}" aria-label="${label} atuais"></label>` : ""}
+      <progress value="${hasValues ? percentage : 0}" max="100" aria-label="${label}: ${escapeHtml(value(currentName))} de ${escapeHtml(value(maximumName))}"></progress>
+    </article>`;
+  };
+  const detail = (label, fieldName) => `<div class="order-sheet-detail">
+    <span>${label}</span><strong>${escapeHtml(value(fieldName))}</strong></div>`;
+  const resourceLimitsAvailable = ["PV máximo", "PE máximo", "SAN máxima"].every((name) =>
+    Number.isSafeInteger(Number(fields[name])) && Number(fields[name]) > 0
+  );
+  const canEditResources = options.canEditResources && resourceLimitsAvailable;
+  const activeSession = options.activeSession;
+  const knownFields = new Set([
+    ...orderAttributes.map(({ name }) => name),
+    "Origem", "Fonte da origem", "Descrição da origem", "Perícia de origem 1", "Perícia de origem 2",
+    "Perícias da origem", "Poder da origem", "Efeito do poder de origem", "Classe", "Classe ID",
+    "Perícia fixa 1", "Perícia fixa 2", "Perícias de classe", "Perícias treinadas", "NEX",
+    "PV máximo", "PV atual", "PE máximo", "PE atual", "SAN máxima", "SAN atual",
+    "Defesa sem proteção", "DT de rituais", "Carga máxima", "Bloqueio", "Esquiva",
+    "Jogador", "Aparência", "Personalidade", "Histórico", "Objetivo",
+    "Ataques", "Habilidades", "Rituais", "Inventário",
+    "Mundano perícias de classe", "Mundano PV inicial", "Mundano PV por NEX",
+    "Mundano PE inicial", "Mundano PE por NEX", "Mundano SAN inicial", "Mundano SAN por NEX",
+    ...Array.from({ length: 10 }, (_, index) => `Perícia de classe ${index + 1}`)
+  ]);
+  const otherFields = Object.entries(fields).filter(([name, fieldValue]) => !knownFields.has(name) && fieldValue !== "");
+  const inventory = getOrderInventory(character);
+  const carryingCapacity = inventory.capacity + inventory.items.reduce((total, item) =>
+    total + (Number(item.capacityBonus) || 0) * (Number(item.quantity) || 0), 0);
+
+  return `<div class="order-sheet">
+    <section class="content-panel order-sheet-overview" aria-label="Resumo do agente">
+      <div class="order-sheet-identity">
+        <p class="eyebrow">Ficha de agente · ${escapeHtml(value("NEX"))} NEX</p>
+        <h2>${escapeHtml(character.name)}</h2>
+        <p>${escapeHtml(value("Classe"))}${fields["Origem"] ? ` · ${escapeHtml(value("Origem"))}` : ""}</p>
+      </div>
+      <div class="order-sheet-meta">
+        ${fields["Jogador"] ? detail("Jogador", "Jogador") : ""}
+        ${campaign ? `<div class="order-sheet-detail"><span>Campanha</span><strong>${escapeHtml(campaign.name)}</strong></div>` : ""}
+      </div>
+    </section>
+    ${canEditResources ? `<form class="order-sheet-resources" data-form="character-resources" data-id="${escapeHtml(character.id)}"
+      aria-label="Recursos atuais">
+      ${resource("Pontos de vida", "PV atual", "PV máximo", "hp", "#c84c4c")}
+      ${resource("Pontos de esforço", "PE atual", "PE máximo", "pe", "#d99132")}
+      ${resource("Sanidade", "SAN atual", "SAN máxima", "san", "#9d63d7")}
+      <div class="order-sheet-resource-actions">
+        <p class="form-hint" role="status">${activeSession
+          ? "Sessão ativa: ao salvar, cada recurso alterado será registrado na linha do tempo."
+          : "Os valores ficam salvos na ficha. Durante uma sessão ativa, as alterações também entram na linha do tempo."}</p>
+        <button class="button button-primary" type="submit">Salvar recursos</button>
+      </div>
+    </form>` : `<section class="order-sheet-resources" aria-label="Recursos atuais">
+      ${resource("Pontos de vida", "PV atual", "PV máximo", "hp", "#c84c4c")}
+      ${resource("Pontos de esforço", "PE atual", "PE máximo", "pe", "#d99132")}
+      ${resource("Sanidade", "SAN atual", "SAN máxima", "san", "#9d63d7")}
+    </section>${options.canEditResources && !resourceLimitsAvailable
+      ? `<p class="form-hint">Não foi possível editar os recursos: a ficha não tem limites máximos válidos cadastrados.</p>`
+      : ""}`}
+    <div class="order-sheet-columns">
+      <div class="order-sheet-side">
+        <section class="content-panel order-sheet-panel">
+          <div class="panel-heading"><h2>Atributos</h2></div>
+          <div class="order-sheet-attributes">${attributes.map(({ key, name, value: attributeValue }) => `<div class="order-sheet-attribute">
+            <span>${escapeHtml(name)} <small>${key}</small></span><strong>${escapeHtml(attributeValue)}</strong>
+          </div>`).join("")}</div>
+        </section>
+        <section class="content-panel order-sheet-panel">
+          <div class="panel-heading"><h2>Combate e limites</h2></div>
+          <div class="order-sheet-details">
+            ${detail("Defesa", "Defesa sem proteção")}
+            ${detail("Bloqueio", "Bloqueio")}
+            ${detail("Esquiva", "Esquiva")}
+            ${detail("DT de rituais", "DT de rituais")}
+            <div class="order-sheet-detail"><span>Carga máxima</span><strong>${carryingCapacity} espaços</strong></div>
+          </div>
+        </section>
+      </div>
+      <section class="content-panel order-sheet-panel order-sheet-skills-panel">
+        <div class="panel-heading"><h2>Perícias</h2><span class="form-hint">Atributo · treino</span></div>
+        <ul class="order-sheet-skills">${skillRows}</ul>
+        <p class="order-sheet-legend">Perícias treinadas recebem o bônus-base indicado. Penalidades de carga podem afetar algumas perícias.</p>
+      </section>
+      <div class="order-sheet-side">
+        ${otherFields.length ? `<section class="content-panel order-sheet-panel">
+          <div class="panel-heading"><h2>Outros campos</h2></div>
+          <div class="order-sheet-details">${otherFields.map(([name, fieldValue]) => `<div class="order-sheet-detail">
+            <span>${escapeHtml(name)}</span><strong>${escapeHtml(String(fieldValue))}</strong>
+          </div>`).join("")}</div>
+        </section>` : ""}
+      </div>
+    </div>
+  </div>`;
+}
+
+const orderTrackClasses = {
+  "Aniquilador": "Combatente",
+  "Comandante de Campo": "Combatente",
+  "Guerreiro": "Combatente",
+  "Operações Especiais": "Combatente",
+  "Tropa de Choque": "Combatente",
+  "Atirador de Elite": "Especialista",
+  "Infiltrador": "Especialista",
+  "Médico de Campo": "Especialista",
+  "Negociador": "Especialista",
+  "Técnico": "Especialista",
+  "Conduíte": "Ocultista",
+  "Flagelador": "Ocultista",
+  "Graduado": "Ocultista",
+  "Intuitivo": "Ocultista",
+  "Lâmina Paranormal": "Ocultista"
+};
+const orderClassNames = ["Combatente", "Especialista", "Ocultista"];
+const orderAbilityGroups = [
+  { id: "Combatente", label: "Combatente" },
+  { id: "Especialista", label: "Especialista" },
+  { id: "Ocultista", label: "Ocultista" },
+  { id: "Classe", label: "Gerais de classe" },
+  { id: "Trilha", label: "Trilhas" },
+  { id: "Poder paranormal", label: "Paranormais" },
+  { id: "Origem", label: "Origens" }
+];
+const orderAbilitySections = [
+  { id: "origem", label: "Poder de origem", categories: ["Origem"] },
+  { id: "classe", label: "Poderes de classe", categories: [...orderClassNames, "Classe"] },
+  { id: "trilha", label: "Trilha", categories: ["Trilha"] },
+  { id: "paranormal", label: "Poderes paranormais", categories: ["Poder paranormal"] },
+  { id: "propria", label: "Habilidades próprias", categories: [] }
+];
+const orderPrerequisiteAttributes = { for: "Força", agi: "Agilidade", int: "Intelecto", vig: "Vigor", pre: "Presença" };
+const abilityRequirementLabels = {
+  met: "Requisitos atendidos",
+  unmet: "Requisitos pendentes",
+  unknown: "Conferir requisitos"
+};
+const abilityCatalogState = { characterId: "", group: "", track: "", query: "", onlyAvailable: false };
+
+function normalizeSearchText(value) {
+  return String(value || "").trim().toLocaleLowerCase("pt-BR");
+}
+
+function parseOrderAbility(ability) {
+  const name = String(ability?.name || "");
+  const category = String(ability?.category || "Própria");
+  const [beforeAffinity, affinity = ""] = String(ability?.description || "").split(/\s*Afinidade:\s*/);
+  const [body, prerequisites = ""] = beforeAffinity.split(/\s*Pré-requisitos?:\s*/);
+  const trackMatch = name.match(/^(.+?) · (.+?) \(NEX (\d+)%\)$/);
+  const elementMatch = name.match(/^(.+) \((Conhecimento|Energia|Morte|Sangue|Medo|Varia)\)$/);
+  const track = trackMatch?.[1] || (category === "Trilha" ? String(ability?.subcategory || "") : "");
+  const ownerClass = orderClassNames.includes(category) ? category : orderTrackClasses[track] || "";
+  const element = elementMatch?.[2] || "";
+  const tone = element
+    ? element.toLocaleLowerCase("pt-BR")
+    : ownerClass
+      ? ownerClass.toLocaleLowerCase("pt-BR")
+      : { Classe: "geral", Origem: "origem", "Poder paranormal": "varia" }[category] || "propria";
+  const eyebrow = {
+    Combatente: "Poder de Combatente",
+    Especialista: "Poder de Especialista",
+    Ocultista: "Poder de Ocultista",
+    Classe: "Poder geral de classe",
+    Trilha: track ? `Trilha ${track}${ownerClass ? ` · ${ownerClass}` : ""}` : "Poder de trilha",
+    "Poder paranormal": "Poder paranormal",
+    Origem: "Poder de origem"
+  }[category] || category;
+  return {
+    name,
+    category,
+    title: trackMatch?.[2] || elementMatch?.[1] || name,
+    eyebrow,
+    track,
+    ownerClass,
+    nex: trackMatch ? Number(trackMatch[3]) : null,
+    element,
+    tone,
+    body: body.trim(),
+    prerequisites: prerequisites.trim().replace(/\.$/, ""),
+    affinity: affinity.trim()
+  };
+}
+
+function orderAbilityContext(character) {
+  const fields = character.fields || {};
+  const abilities = getCharacterEntryList(character, "ability");
+  const elementCounts = {};
+  abilities.forEach((ability) => {
+    const { element } = parseOrderAbility(ability);
+    if (element && ability.category === "Poder paranormal") elementCounts[element] = (elementCounts[element] || 0) + 1;
+  });
+  return {
+    className: String(fields.Classe || ""),
+    nex: Number.parseInt(fields.NEX, 10),
+    attributes: Object.fromEntries(orderAttributes.map(({ name }) => [name, Number.parseInt(fields[name], 10)])),
+    hasSkillData: Boolean(fields["Perícias treinadas"]),
+    trainedSkills: new Set(String(fields["Perícias treinadas"] || "")
+      .split(/\r?\n/)
+      .map((skill) => normalizeSearchText(skill.replace(/\s*\(\+5 base\)$/, "")))
+      .filter(Boolean)),
+    abilityNames: new Set([
+      ...abilities.map((ability) => normalizeSearchText(ability.name)),
+      ...(fields["Poder da origem"] ? [normalizeSearchText(fields["Poder da origem"])] : [])
+    ]),
+    catalogNames: new Set(getOrderAbilitiesCatalog().map((item) => normalizeSearchText(item.name))),
+    elementCounts
+  };
+}
+
+function evaluateOrderRequirement(text, context) {
+  const label = text.trim();
+  const known = (isMet, detail) => ({ label, status: isMet ? "met" : "unmet", detail });
+  const unknown = (detail) => ({ label, status: "unknown", detail });
+
+  const attribute = label.match(/^(For|Agi|Int|Vig|Pre)\s+(-?\d+)$/i);
+  if (attribute) {
+    const attributeName = orderPrerequisiteAttributes[attribute[1].toLocaleLowerCase("pt-BR")];
+    const current = context.attributes[attributeName];
+    return Number.isFinite(current)
+      ? known(current >= Number(attribute[2]), `${attributeName} atual: ${current}.`)
+      : unknown(`${attributeName} não está preenchido na ficha.`);
+  }
+  const nex = label.match(/^NEX\s+(\d+)%$/i);
+  if (nex) {
+    return Number.isFinite(context.nex)
+      ? known(context.nex >= Number(nex[1]), `NEX atual: ${context.nex}%.`)
+      : unknown("O NEX não está preenchido na ficha.");
+  }
+  const trained = label.match(/^treinado em (.+)$/i);
+  if (trained) {
+    if (!context.hasSkillData) return unknown("As perícias treinadas não estão registradas na ficha.");
+    const acceptsAny = /\s+ou\s+/i.test(trained[1]);
+    const skills = trained[1].split(/\s+(?:ou|e)\s+/i);
+    const results = skills.map((skill) => context.trainedSkills.has(normalizeSearchText(skill)));
+    return known(acceptsAny ? results.some(Boolean) : results.every(Boolean),
+      acceptsAny ? "Basta ser treinado em uma das perícias." : "É preciso ser treinado em todas as perícias.");
+  }
+  const element = label.match(/^(Conhecimento|Energia|Morte|Sangue|Medo)\s+(\d+)$/i);
+  if (element) {
+    const count = context.elementCounts[element[1]] || 0;
+    return unknown(`A ficha tem ${count} poder(es) paranormal(is) de ${element[1]}. Confira a regra com o mestre.`);
+  }
+  if (context.catalogNames.has(normalizeSearchText(label))) {
+    return known(context.abilityNames.has(normalizeSearchText(label)), "Exige outro poder na ficha.");
+  }
+  return unknown("Confira este requisito com o mestre.");
+}
+
+function orderAbilityRequirements(info, context) {
+  const requirements = [];
+  if (info.ownerClass) {
+    const label = `Classe ${info.ownerClass}`;
+    requirements.push(orderClassNames.includes(context.className)
+      ? { label, status: context.className === info.ownerClass ? "met" : "unmet", detail: `Classe atual: ${context.className}.` }
+      : { label, status: "unknown", detail: "A classe da ficha não é uma das classes básicas." });
+  }
+  if (info.nex) requirements.push(evaluateOrderRequirement(`NEX ${info.nex}%`, context));
+  if (info.category === "Origem") {
+    requirements.push({ label: "Origem", status: "unknown", detail: "Vem da origem escolhida; outras origens dependem do mestre." });
+  }
+  if (info.prerequisites) {
+    for (const requirement of info.prerequisites.split(/,\s*/).filter(Boolean)) {
+      requirements.push(evaluateOrderRequirement(requirement, context));
+    }
+  }
+  return requirements;
+}
+
+function orderRequirementsStatus(requirements) {
+  if (requirements.some(({ status }) => status === "unmet")) return "unmet";
+  if (requirements.some(({ status }) => status === "unknown")) return "unknown";
+  return "met";
+}
+
+function renderAbilityBadges(info) {
+  return [
+    info.nex ? `<span class="ability-badge">NEX ${info.nex}%</span>` : "",
+    info.element ? `<span class="ability-badge ability-badge-element">${escapeHtml(info.element)}</span>` : ""
+  ].join("");
+}
+
+function renderAbilityText(info, { showPrerequisites = false } = {}) {
+  return `${info.body ? `<p class="ability-body">${escapeHtml(info.body)}</p>` : ""}
+    ${info.affinity ? `<p class="ability-affinity"><strong>Afinidade</strong>${escapeHtml(info.affinity)}</p>` : ""}
+    ${showPrerequisites && info.prerequisites
+      ? `<p class="ability-prerequisite-text"><strong>Pré-requisito:</strong> ${escapeHtml(info.prerequisites)}</p>`
+      : ""}`;
+}
+
+function renderAbilityRequirements(requirements) {
+  if (!requirements.length) return "";
+  const icons = { met: "✓", unmet: "✕", unknown: "?" };
+  const statusText = { met: "atendido", unmet: "não atendido", unknown: "conferir" };
+  return `<ul class="ability-requirements" aria-label="Requisitos">
+    ${requirements.map(({ label, status, detail }) => `<li class="is-${status}" title="${escapeHtml(detail)}">
+      <span aria-hidden="true">${icons[status]}</span>${escapeHtml(label)}<span class="sr-only">: ${statusText[status]}. ${escapeHtml(detail)}</span>
+    </li>`).join("")}
+  </ul>`;
+}
+
+function abilityCatalogMatches(card, state) {
+  if (state.group && card.group !== state.group) return false;
+  if (state.track && card.track !== state.track) return false;
+  if (state.onlyAvailable && (card.added || card.status === "unmet")) return false;
+  return !state.query || card.search.includes(state.query);
+}
+
+function renderAbilityEntryCard(ability, info, canEdit, origin = null) {
+  return `<article class="character-entry-card ability-entry tone-${info.tone}" data-ability-card
+    data-search="${escapeHtml(normalizeSearchText(`${info.name} ${info.eyebrow} ${info.element} ${ability.description || ""}`))}">
+    <div class="character-entry-heading">
+      <div><p class="eyebrow">${origin ? `Adicionada pela origem · ${escapeHtml(origin)}` : escapeHtml(info.eyebrow)}</p>
+        <h3>${escapeHtml(info.title)}</h3>
+        <div class="ability-badges">${renderAbilityBadges(info)}</div></div>
+      ${origin ? `<span class="status-chip">Automática</span>` : canEdit ? `<div class="card-actions">
+        <button class="button button-outline" type="button" data-action="edit-character-entry" data-entry-type="ability" data-id="${escapeHtml(ability.id)}">Editar</button>
+        <button class="button button-outline" type="button" data-action="remove-character-entry" data-entry-type="ability" data-id="${escapeHtml(ability.id)}">Excluir</button>
+      </div>` : ""}
+    </div>
+    ${renderAbilityText(info, { showPrerequisites: true })}
+  </article>`;
+}
+
+function renderOrderAbilityTab(character, canEdit) {
+  const fields = character.fields || {};
+  const abilities = getCharacterEntryList(character, "ability");
+  const originAbility = fields["Poder da origem"] ? {
+    name: fields["Poder da origem"],
+    category: "Origem",
+    description: fields["Efeito do poder de origem"] || "",
+    source: fields.Origem || "Origem escolhida"
+  } : null;
+
+  const entries = [
+    ...(originAbility ? [{ ability: originAbility, info: parseOrderAbility(originAbility), origin: originAbility.source }] : []),
+    ...abilities.map((ability) => ({ ability, info: parseOrderAbility(ability), origin: null }))
+  ];
+  const sectionFor = (category) => orderAbilitySections.find((section) => section.categories.includes(category))?.id || "propria";
+  const sections = orderAbilitySections.map((section) => {
+    const sectionEntries = entries.filter(({ info }) => sectionFor(info.category) === section.id)
+      .sort((first, second) => (first.info.nex || 0) - (second.info.nex || 0));
+    if (!sectionEntries.length) return "";
+    return `<section class="ability-group" data-ability-group aria-labelledby="ability-group-${section.id}">
+      <h3 class="ability-group-title" id="ability-group-${section.id}">${section.label} <span>${sectionEntries.length}</span></h3>
+      <div class="character-entry-list">${sectionEntries.map(({ ability, info, origin }) =>
+        renderAbilityEntryCard(ability, info, canEdit, origin)).join("")}</div>
+    </section>`;
+  }).join("");
+
+  const context = orderAbilityContext(character);
+  const elementTally = Object.entries(context.elementCounts)
+    .map(([element, count]) => `<span class="ability-summary-pill tone-${element.toLocaleLowerCase("pt-BR")}"><i aria-hidden="true"></i>${escapeHtml(element)} ×${count}</span>`)
+    .join("");
+  const summary = entries.length ? `<div class="ability-summary" aria-label="Resumo das habilidades">
+    <span class="ability-summary-total"><strong>${entries.length}</strong> habilidade(s) na ficha</span>
+    ${elementTally ? `<span class="ability-summary-label">Poderes por elemento</span>${elementTally}` : ""}
+  </div>` : "";
+
+  if (abilityCatalogState.characterId !== character.id) {
+    Object.assign(abilityCatalogState, { characterId: character.id, group: "", track: "", query: "", onlyAvailable: false });
+  }
+  const knownAbilityNames = new Set(entries.map(({ ability }) => normalizeSearchText(ability.name)));
+  const catalogItems = getOrderAbilitiesCatalog().map((item) => {
+    const info = parseOrderAbility(item);
+    const requirements = orderAbilityRequirements(info, context);
+    return {
+      item,
+      info,
+      requirements,
+      card: {
+        group: item.category,
+        track: info.track,
+        added: knownAbilityNames.has(normalizeSearchText(item.name)),
+        status: orderRequirementsStatus(requirements),
+        search: normalizeSearchText(`${item.name} ${info.eyebrow} ${info.element} ${item.description}`)
+      }
+    };
+  });
+  const visibleCount = catalogItems.filter(({ card }) => abilityCatalogMatches(card, abilityCatalogState)).length;
+  const groupCounts = Object.fromEntries(orderAbilityGroups.map(({ id }) =>
+    [id, catalogItems.filter(({ card }) => card.group === id).length]));
+  const catalogAbilityCards = catalogItems.map(({ item, info, requirements, card }) => `<article
+    class="catalog-card ability-card tone-${info.tone}" data-catalog-card="ability"
+    data-search="${escapeHtml(card.search)}" data-group="${escapeHtml(card.group)}" data-track="${escapeHtml(card.track)}"
+    data-status="${card.status}" data-added="${card.added}" ${abilityCatalogMatches(card, abilityCatalogState) ? "" : "hidden"}>
+    <p class="eyebrow">${escapeHtml(info.eyebrow)}</p>
+    <h4>${escapeHtml(info.title)}</h4>
+    <div class="ability-badges">${renderAbilityBadges(info)}</div>
+    ${renderAbilityText(info)}
+    ${renderAbilityRequirements(requirements)}
+    <div class="catalog-card-footer">
+      <span class="ability-status is-${card.status}">${abilityRequirementLabels[card.status]}</span>
+      ${card.added ? `<span class="status-chip">Na ficha</span>` : `<button class="button button-small button-primary" type="button"
+        data-action="add-catalog-item" data-catalog-type="ability" data-catalog-id="${escapeHtml(item.id)}"
+        aria-label="Adicionar ${escapeHtml(info.title)} à ficha">+ Adicionar</button>`}
+    </div>
+  </article>`).join("");
+
+  const trackOptions = orderClassNames.map((className) => `<optgroup label="${className}${className === context.className ? " · sua classe" : ""}">
+    ${Object.entries(orderTrackClasses).filter(([, owner]) => owner === className).map(([track]) =>
+      `<option value="${escapeHtml(track)}" ${abilityCatalogState.track === track ? "selected" : ""}>${escapeHtml(track)}</option>`).join("")}
+  </optgroup>`).join("");
+  const groupChips = [{ id: "", label: "Todas" }, ...orderAbilityGroups].map(({ id, label }) => `<button type="button"
+    class="filter-chip" data-action="ability-group-chip" data-group="${escapeHtml(id)}" aria-pressed="${abilityCatalogState.group === id}">
+    ${escapeHtml(label)}<span>${id ? groupCounts[id] : catalogItems.length}</span></button>`).join("");
+
+  return `<section class="character-entry-section">
+    <div class="panel-heading"><div><h2>Habilidades</h2>
+      <p class="form-hint">A habilidade da origem escolhida aparece automaticamente. Adicione aqui habilidades oficiais do compêndio ou criações próprias.</p></div>
+      ${canEdit ? `<div class="card-actions">
+        <button class="button button-primary" type="button" data-action="toggle-catalog" data-catalog-type="ability">Compêndio de habilidades</button>
+        <button class="button button-outline" type="button" data-action="new-character-entry" data-entry-type="ability">Nova habilidade própria</button>
+      </div>` : ""}
+    </div>
+    ${canEdit ? `<div class="content-panel catalog-panel" data-catalog-panel="ability" hidden>
+      <div class="catalog-header">
+        <div>
+          <h3>Compêndio de Habilidades</h3>
+          <p class="form-hint">Os requisitos são conferidos com os atributos, o NEX, a classe e as perícias da ficha. Itens marcados com “?” dependem da avaliação do mestre.</p>
+        </div>
+        <button class="button button-small button-outline" type="button" data-action="close-catalog" data-catalog-type="ability">Fechar compêndio</button>
+      </div>
+      <div class="filter-chips" role="group" aria-label="Filtrar por grupo">${groupChips}</div>
+      <div class="character-filters">
+        <label class="character-filter"><span>Buscar no compêndio</span>
+          <input type="search" data-catalog-search="ability" value="${escapeHtml(abilityCatalogState.query)}"
+            placeholder="Buscar por nome, classe, trilha ou efeito"></label>
+        <label><span>Trilha</span>
+          <select data-catalog-track="ability"><option value="">Todas as trilhas</option>${trackOptions}</select></label>
+        <label class="check-field"><input type="checkbox" data-catalog-available="ability" ${abilityCatalogState.onlyAvailable ? "checked" : ""}>
+          <span>Ocultar indisponíveis e já adicionadas</span></label>
+      </div>
+      <p class="catalog-count" data-catalog-count="ability" aria-live="polite">Mostrando ${visibleCount} de ${catalogItems.length} habilidades</p>
+      <div class="catalog-grid" data-catalog-list="ability">
+        ${catalogAbilityCards}
+        <p class="empty-panel catalog-empty" data-catalog-empty="ability" ${visibleCount ? "hidden" : ""}>Nenhuma habilidade encontrada com esses filtros.</p>
+      </div>
+    </div>` : ""}
+    ${summary}
+    ${canEdit && entries.length ? `<label class="character-filter"><span>Filtrar habilidades da ficha</span>
+      <input type="search" data-ability-filter placeholder="Buscar nas habilidades salvas na ficha"></label>` : ""}
+    <div class="ability-groups" data-ability-list>${sections || `<p class="empty-panel">Nenhuma habilidade cadastrada ainda. Abra o compêndio para escolher poderes da sua classe, trilha ou paranormais.</p>`}
+      <p class="empty-panel" data-ability-empty hidden>Nenhuma habilidade da ficha corresponde à busca.</p></div>
+    ${canEdit ? `<form class="content-panel character-editor" data-form="character-entry" data-entry-type="ability" data-id="" hidden>
+      <h3 data-entry-form-title>Nova habilidade própria</h3>
+      <label><span>Nome *</span><input name="name" required maxlength="100"></label>
+      <label><span>Categoria</span><select name="category">
+        <option>Própria</option><option>Classe</option><option>Trilha</option><option>Origem</option><option>Poder paranormal</option>
+      </select></label>
+      <label><span>Descrição</span><textarea name="description" rows="4" maxlength="3000"></textarea></label>
+      <div class="form-actions"><button class="button button-primary" type="submit">Salvar habilidade</button>
+        <button class="button button-outline" type="button" data-action="cancel-character-entry" data-entry-type="ability">Cancelar</button></div>
+    </form>` : ""}
+  </section>`;
+}
+
+function renderOrderRitualTab(character, canEdit) {
+  const rituals = Array.isArray(character.fields?.Rituais)
+    ? character.fields.Rituais.filter((ritual) => ritual && typeof ritual === "object" && !Array.isArray(ritual))
+    : [];
+  const elements = [...new Set(rituals.map((ritual) => ritual.element).filter(Boolean))];
+  const cards = rituals.map((ritual) => `<article class="character-entry-card" data-ritual-card
+    data-circle="${escapeHtml(ritual.circle)}" data-element="${escapeHtml(ritual.element)}">
+    <div class="character-entry-heading"><div><p class="eyebrow">${escapeHtml(ritual.element)} · ${escapeHtml(ritual.circle)}º círculo</p>
+      <h3>${escapeHtml(ritual.name)}</h3></div>
+      ${canEdit ? `<div class="card-actions">
+        <button class="button button-outline" type="button" data-action="edit-character-entry" data-entry-type="ritual" data-id="${escapeHtml(ritual.id)}">Editar</button>
+        <button class="button button-outline" type="button" data-action="remove-character-entry" data-entry-type="ritual" data-id="${escapeHtml(ritual.id)}">Excluir</button>
+      </div>` : ""}
+    </div>
+    <dl class="character-entry-facts">
+      ${ritual.execution ? `<div><dt>Execução</dt><dd>${escapeHtml(ritual.execution)}</dd></div>` : ""}
+      ${ritual.range ? `<div><dt>Alcance</dt><dd>${escapeHtml(ritual.range)}</dd></div>` : ""}
+      ${ritual.target ? `<div><dt>Alvo/área</dt><dd>${escapeHtml(ritual.target)}</dd></div>` : ""}
+      ${ritual.duration ? `<div><dt>Duração</dt><dd>${escapeHtml(ritual.duration)}</dd></div>` : ""}
+      ${ritual.resistance ? `<div><dt>Resistência</dt><dd>${escapeHtml(ritual.resistance)}</dd></div>` : ""}
+    </dl>
+    ${ritual.description ? `<p>${escapeHtml(ritual.description)}</p>` : ""}
+  </article>`).join("");
+
+  const knownRitualNames = new Set(rituals.map((r) => r.name));
+  const catalogRitualCards = getOrderRitualsCatalog().map((item) => {
+    const isAdded = knownRitualNames.has(item.name);
+    return `<article class="catalog-card" data-catalog-card="ritual"
+      data-search="${escapeHtml(`${item.name} ${item.element} ${item.circle} ${item.description}`.toLocaleLowerCase("pt-BR"))}"
+      data-circle="${escapeHtml(item.circle)}" data-element="${escapeHtml(item.element)}">
+      <div class="character-entry-heading">
+        <div>
+          <p class="eyebrow">${escapeHtml(item.element)} · ${escapeHtml(item.circle)}º círculo</p>
+          <h4>${escapeHtml(item.name)}</h4>
+        </div>
+        ${isAdded ? `<span class="status-chip">Aprendido</span>` : `
+          <button class="button button-small button-primary" type="button" data-action="add-catalog-item"
+            data-catalog-type="ritual" data-catalog-id="${escapeHtml(item.id)}">+ Aprender</button>
+        `}
+      </div>
+      <dl class="character-entry-facts">
+        ${item.execution ? `<div><dt>Execução</dt><dd>${escapeHtml(item.execution)}</dd></div>` : ""}
+        ${item.range ? `<div><dt>Alcance</dt><dd>${escapeHtml(item.range)}</dd></div>` : ""}
+        ${item.target ? `<div><dt>Alvo/área</dt><dd>${escapeHtml(item.target)}</dd></div>` : ""}
+        ${item.duration ? `<div><dt>Duração</dt><dd>${escapeHtml(item.duration)}</dd></div>` : ""}
+        ${item.resistance ? `<div><dt>Resistência</dt><dd>${escapeHtml(item.resistance)}</dd></div>` : ""}
+      </dl>
+      <p>${escapeHtml(item.description)}</p>
+    </article>`;
+  }).join("");
+
+  return `<section class="character-entry-section">
+    <div class="panel-heading"><div><h2>Rituais</h2><p class="form-hint">Aprenda rituais do grimório oficial ou crie rituais próprios para o agente.</p></div>
+      ${canEdit ? `<div class="card-actions">
+        <button class="button button-primary" type="button" data-action="toggle-catalog" data-catalog-type="ritual">Grimório de rituais</button>
+        <button class="button button-outline" type="button" data-action="new-character-entry" data-entry-type="ritual">Novo ritual próprio</button>
+      </div>` : ""}
+    </div>
+    ${canEdit ? `<div class="content-panel catalog-panel" data-catalog-panel="ritual" hidden>
+      <div class="catalog-header">
+        <div>
+          <h3>Grimório de Rituais</h3>
+          <p class="form-hint">Selecione rituais de 1º a 4º círculo de Conhecimento, Energia, Medo, Morte, Sangue e Varia para aprender.</p>
+        </div>
+        <button class="button button-small button-outline" type="button" data-action="close-catalog" data-catalog-type="ritual">Fechar grimório</button>
+      </div>
+      <div class="character-filters">
+        <label class="character-filter"><span>Buscar no grimório</span>
+          <input type="search" data-catalog-search="ritual" placeholder="Buscar por nome, elemento ou efeito"></label>
+        <label><span>Filtrar por círculo</span>
+          <select data-catalog-circle="ritual">
+            <option value="">Todos os círculos</option>
+            <option value="1">1º círculo</option>
+            <option value="2">2º círculo</option>
+            <option value="3">3º círculo</option>
+            <option value="4">4º círculo</option>
+          </select>
+        </label>
+        <label><span>Filtrar por elemento</span>
+          <select data-catalog-element="ritual">
+            <option value="">Todos os elementos</option>
+            <option value="Conhecimento">Conhecimento</option>
+            <option value="Energia">Energia</option>
+            <option value="Medo">Medo</option>
+            <option value="Morte">Morte</option>
+            <option value="Sangue">Sangue</option>
+            <option value="Varia">Varia</option>
+          </select>
+        </label>
+      </div>
+      <div class="catalog-grid" data-catalog-list="ritual">
+        ${catalogRitualCards}
+      </div>
+    </div>` : ""}
+    ${canEdit ? `<div class="character-filters">
+      <label><span>Filtrar rituais da ficha (círculo)</span><select data-ritual-circle-filter>
+        <option value="">Todos</option>${[1, 2, 3, 4].map((circle) => `<option value="${circle}">${circle}º círculo</option>`).join("")}
+      </select></label>
+      <label><span>Filtrar rituais da ficha (elemento)</span><select data-ritual-element-filter>
+        <option value="">Todos</option>${elements.map((element) => `<option value="${escapeHtml(element)}">${escapeHtml(element)}</option>`).join("")}
+      </select></label>
+    </div>` : ""}
+    <div class="character-entry-list" data-ritual-list>${cards || `<p class="empty-panel">Você ainda não cadastrou rituais.</p>`}</div>
+    ${canEdit ? `<form class="content-panel character-editor" data-form="character-entry" data-entry-type="ritual" data-id="" hidden>
+      <h3 data-entry-form-title>Novo ritual próprio</h3>
+      <label><span>Nome *</span><input name="name" required maxlength="100"></label>
+      <div class="form-grid">
+        <label><span>Elemento</span><input name="element" maxlength="60" placeholder="Opcional"></label>
+        <label><span>Círculo</span><select name="circle">${[1, 2, 3, 4].map((circle) => `<option value="${circle}">${circle}º</option>`).join("")}</select></label>
+        <label><span>Execução</span><input name="execution" maxlength="80"></label>
+        <label><span>Alcance</span><input name="range" maxlength="80"></label>
+        <label><span>Alvo ou área</span><input name="target" maxlength="120"></label>
+        <label><span>Duração</span><input name="duration" maxlength="80"></label>
+        <label><span>Resistência</span><input name="resistance" maxlength="120"></label>
+      </div>
+      <label><span>Descrição</span><textarea name="description" rows="5" maxlength="3000"></textarea></label>
+      <div class="form-actions"><button class="button button-primary" type="submit">Salvar ritual</button>
+        <button class="button button-outline" type="button" data-action="cancel-character-entry" data-entry-type="ritual">Cancelar</button></div>
+    </form>` : ""}
+  </section>`;
+}
+
+function getOrderInventory(character) {
+  const stored = character.fields?.["Inventário"] && typeof character.fields["Inventário"] === "object"
+    ? character.fields["Inventário"]
+    : {};
+  const parsedCapacity = Number.parseInt(String(character.fields?.["Carga máxima"] || ""), 10);
+  const capacity = Number.isSafeInteger(Number(stored.capacity)) && Number(stored.capacity) >= 0
+    ? Number(stored.capacity)
+    : Number.isSafeInteger(parsedCapacity) && parsedCapacity >= 0 ? parsedCapacity : 0;
+  const limits = stored.itemLimits && typeof stored.itemLimits === "object" ? stored.itemLimits : {};
+  return {
+    prestige: stored.prestige ?? "",
+    rank: stored.rank || "",
+    creditLimit: stored.creditLimit || "",
+    capacity,
+    itemLimits: Object.fromEntries(orderItemCategories.map((category) => [
+      category,
+      limits[category] ?? ""
+    ])),
+    items: Array.isArray(stored.items)
+      ? stored.items.filter((item) => item && typeof item === "object" && !Array.isArray(item))
+      : []
+  };
+}
+
+function renderOrderInventoryTab(character, canEdit) {
+  const inventory = getOrderInventory(character);
+  const itemCount = inventory.items.reduce((total, item) => total + Math.max(0, Number(item.quantity) || 0), 0);
+  const usedSpaces = inventory.items.reduce((total, item) =>
+    total + (Number(item.spaces) || 0) * (Number(item.quantity) || 0), 0);
+  const itemCapacityBonus = inventory.items.reduce((total, item) =>
+    total + (Number(item.capacityBonus) || 0) * (Number(item.quantity) || 0), 0);
+  const maximumCapacity = inventory.capacity + itemCapacityBonus;
+  const categoryCounts = Object.fromEntries(orderItemCategories.map((category) => [category,
+    inventory.items.reduce((total, item) => total + (item.category === category ? Number(item.quantity) || 0 : 0), 0)
+  ]));
+  const labelForType = Object.fromEntries(orderItemTypes);
+  const items = inventory.items.map((item) => `<article class="character-entry-card inventory-item-card">
+    <div class="character-entry-heading"><div><p class="eyebrow">${escapeHtml(labelForType[item.type] || "Item")} ·
+      ${escapeHtml(item.category || "Sem categoria")}${item.quantity > 1 ? ` · quantidade ${escapeHtml(item.quantity)}` : ""}</p>
+      <h3>${escapeHtml(item.name)}</h3></div>
+      ${canEdit ? `<div class="card-actions">
+        <button class="button button-outline" type="button" data-action="edit-character-entry" data-entry-type="inventory" data-id="${escapeHtml(item.id)}">Editar</button>
+        <button class="button button-outline" type="button" data-action="remove-character-entry" data-entry-type="inventory" data-id="${escapeHtml(item.id)}">Remover</button>
+      </div>` : ""}
+    </div>
+    <div class="character-entry-facts">
+      ${item.spaces !== undefined ? `<div><dt>Espaços</dt><dd>${escapeHtml(item.spaces)} por unidade</dd></div>` : ""}
+      ${Number(item.capacityBonus) ? `<div><dt>Bônus de carga</dt><dd>+${escapeHtml(item.capacityBonus)} espaços</dd></div>` : ""}
+      ${item.damage ? `<div><dt>Dano</dt><dd>${escapeHtml(item.damage)}${item.critical ? ` · crítico ${escapeHtml(item.critical)}` : ""}</dd></div>` : ""}
+      ${item.range ? `<div><dt>Alcance</dt><dd>${escapeHtml(item.range)}</dd></div>` : ""}
+      ${item.compatibleWeapon ? `<div><dt>Compatível com</dt><dd>${escapeHtml(item.compatibleWeapon)}</dd></div>` : ""}
+      ${item.defense ? `<div><dt>Defesa</dt><dd>${escapeHtml(item.defense)}</dd></div>` : ""}
+      ${item.resistance ? `<div><dt>Resistência</dt><dd>${escapeHtml(item.resistance)}</dd></div>` : ""}
+    </div>
+    ${item.description ? `<p>${escapeHtml(item.description)}</p>` : ""}
+  </article>`).join("");
+  const itemLimits = orderItemCategories.map((category) => `<label><span>Categoria ${category} · limite</span>
+    <input name="limit${category}" type="number" min="0" max="999" step="1" value="${escapeHtml(inventory.itemLimits[category])}"></label>`).join("");
+  const quickCreateButtons = orderItemTypes.map(([type, label]) => `<button class="button button-outline" type="button"
+    data-action="new-character-entry" data-entry-type="inventory" data-item-type="${type}">Novo ${label.toLocaleLowerCase("pt-BR")}</button>`).join("");
+
+  const catalogItemCards = getOrderInventoryCatalog().map((item) => {
+    return `<article class="catalog-card" data-catalog-card="inventory"
+      data-search="${escapeHtml(`${item.name} ${item.type} ${item.category} ${item.description}`.toLocaleLowerCase("pt-BR"))}"
+      data-item-type="${escapeHtml(item.type)}" data-item-category="${escapeHtml(item.category || "0")}">
+      <div class="character-entry-heading">
+        <div>
+          <p class="eyebrow">${escapeHtml(labelForType[item.type] || item.type)} · Categoria ${escapeHtml(item.category || "0")}</p>
+          <h4>${escapeHtml(item.name)}</h4>
+        </div>
+        <button class="button button-small button-primary" type="button" data-action="add-catalog-item"
+          data-catalog-type="inventory" data-catalog-id="${escapeHtml(item.id)}">+ Adicionar</button>
+      </div>
+      <dl class="character-entry-facts">
+        ${item.spaces !== undefined ? `<div><dt>Espaços</dt><dd>${escapeHtml(item.spaces)}</dd></div>` : ""}
+        ${Number(item.capacityBonus) ? `<div><dt>Bônus de carga</dt><dd>+${escapeHtml(item.capacityBonus)}</dd></div>` : ""}
+        ${item.damage ? `<div><dt>Dano</dt><dd>${escapeHtml(item.damage)}${item.critical ? ` (${escapeHtml(item.critical)})` : ""}</dd></div>` : ""}
+        ${item.range ? `<div><dt>Alcance</dt><dd>${escapeHtml(item.range)}</dd></div>` : ""}
+        ${item.ammunition ? `<div><dt>Munição</dt><dd>${escapeHtml(item.ammunition)}</dd></div>` : ""}
+        ${item.compatibleWeapon ? `<div><dt>Compatível com</dt><dd>${escapeHtml(item.compatibleWeapon)}</dd></div>` : ""}
+        ${item.defense ? `<div><dt>Defesa</dt><dd>${escapeHtml(item.defense)}</dd></div>` : ""}
+        ${item.resistance ? `<div><dt>Resistência</dt><dd>${escapeHtml(item.resistance)}</dd></div>` : ""}
+      </dl>
+      ${item.description ? `<p>${escapeHtml(item.description)}</p>` : ""}
+    </article>`;
+  }).join("");
+
+  return `<section class="character-entry-section">
+    <div class="panel-heading"><div><h2>Inventário</h2>
+      <p class="form-hint">${itemCount} item(ns) · ${usedSpaces} de ${maximumCapacity} espaços ocupados</p></div>
+      ${canEdit ? `<div class="card-actions">
+        <button class="button button-primary" type="button" data-action="toggle-catalog" data-catalog-type="inventory">Arsenal de itens</button>
+        ${quickCreateButtons}
+      </div>` : ""}
+    </div>
+    ${usedSpaces > maximumCapacity ? `<p class="empty-panel character-limit-notice">O inventário excede a carga máxima configurada.</p>` : ""}
+    ${canEdit ? `<div class="content-panel catalog-panel" data-catalog-panel="inventory" hidden>
+      <div class="catalog-header">
+        <div>
+          <h3>Arsenal e Equipamentos</h3>
+          <p class="form-hint">Selecione armas, munições, proteções, itens operacionais e itens amaldiçoados de Ordem Paranormal para adicionar ao inventário.</p>
+        </div>
+        <button class="button button-small button-outline" type="button" data-action="close-catalog" data-catalog-type="inventory">Fechar arsenal</button>
+      </div>
+      <div class="character-filters">
+        <label class="character-filter"><span>Buscar no arsenal</span>
+          <input type="search" data-catalog-search="inventory" placeholder="Buscar por nome ou características"></label>
+        <label><span>Filtrar por tipo</span>
+          <select data-catalog-type-select="inventory">
+            <option value="">Todos os tipos</option>
+            <option value="arma">Armas</option>
+            <option value="municao">Munições</option>
+            <option value="protecao">Proteções</option>
+            <option value="geral">Itens Operacionais / Gerais</option>
+            <option value="amaldiçoado">Itens Amaldiçoados</option>
+          </select>
+        </label>
+        <label><span>Filtrar por categoria</span>
+          <select data-catalog-category-select="inventory">
+            <option value="">Todas as categorias</option>
+            <option value="0">Categoria 0</option>
+            <option value="I">Categoria I</option>
+            <option value="II">Categoria II</option>
+            <option value="III">Categoria III</option>
+            <option value="IV">Categoria IV</option>
+          </select>
+        </label>
+      </div>
+      <div class="catalog-grid" data-catalog-list="inventory">
+        ${catalogItemCards}
+      </div>
+    </div>` : ""}
+    <section class="content-panel inventory-summary">
+      <div class="inventory-count-grid">${orderItemCategories.map((category) => `<div class="inventory-count">
+        <span>Categoria ${category}</span><strong>${categoryCounts[category]}${inventory.itemLimits[category] === "" ? "" : ` / ${escapeHtml(inventory.itemLimits[category])}`}</strong>
+      </div>`).join("")}</div>
+      ${canEdit ? `<form class="inventory-settings-form" data-form="character-section" data-section="inventory" data-id="${escapeHtml(character.id)}">
+        <div class="form-grid">
+          <label><span>Pontos de prestígio</span><input name="prestige" type="number" min="0" max="999999" step="1" value="${escapeHtml(inventory.prestige)}"></label>
+          <label><span>Patente</span><input name="rank" maxlength="80" value="${escapeHtml(inventory.rank)}"></label>
+          <label><span>Limite de crédito</span><input name="creditLimit" maxlength="80" value="${escapeHtml(inventory.creditLimit)}"></label>
+          <label><span>Carga base máxima</span><input name="capacity" type="number" min="0" max="9999" step="1" value="${escapeHtml(inventory.capacity)}"></label>
+          ${itemLimits}
+        </div>
+        <p class="form-hint">Os limites são configuráveis conforme as regras da sua mesa. Bônus de carga de itens são somados à capacidade base.</p>
+        <div class="form-actions"><button class="button button-primary" type="submit">Salvar limites e patente</button></div>
+      </form>` : `<dl class="character-entry-facts">
+        <div><dt>Pontos de prestígio</dt><dd>${escapeHtml(inventory.prestige || "—")}</dd></div>
+        <div><dt>Patente</dt><dd>${escapeHtml(inventory.rank || "—")}</dd></div>
+        <div><dt>Limite de crédito</dt><dd>${escapeHtml(inventory.creditLimit || "—")}</dd></div>
+        <div><dt>Carga base máxima</dt><dd>${escapeHtml(inventory.capacity)} espaços</dd></div>
+      </dl>`}
+    </section>
+    <div class="character-entry-list" data-inventory-list>${items || `<p class="empty-panel">Você ainda não possui itens.</p>`}</div>
+    ${canEdit ? `<form class="content-panel character-editor" data-form="character-entry" data-entry-type="inventory" data-id="" hidden>
+      <h3 data-entry-form-title>Novo item</h3>
+      <div class="form-grid">
+        <label><span>Nome *</span><input name="name" required maxlength="100"></label>
+        <label><span>Tipo</span><select name="type" data-inventory-type>
+          ${orderItemTypes.map(([type, label]) => `<option value="${type}">${label}</option>`).join("")}
+        </select></label>
+        <label><span>Categoria</span><select name="category"><option value="">Sem categoria</option>
+          ${orderItemCategories.map((category) => `<option value="${category}">${category}</option>`).join("")}
+        </select></label>
+        <label><span>Quantidade</span><input name="quantity" type="number" min="1" max="999" step="1" value="1" required></label>
+        <label><span>Espaços por unidade</span><input name="spaces" type="number" min="-99" max="999" step="1" value="1"></label>
+        <label><span>Bônus de carga</span><input name="capacityBonus" type="number" min="0" max="999" step="1" value="0"></label>
+      </div>
+      <div class="form-grid inventory-specific-fields" data-inventory-specific="arma">
+        <label><span>Dano</span><input name="damage" maxlength="80"></label>
+        <label><span>Crítico</span><input name="critical" maxlength="40"></label>
+        <label><span>Alcance</span><input name="range" maxlength="80"></label>
+        <label><span>Tipo de dano</span><input name="damageType" maxlength="80"></label>
+        <label><span>Munição</span><input name="ammunition" maxlength="80"></label>
+      </div>
+      <div class="form-grid inventory-specific-fields" data-inventory-specific="municao" hidden>
+        <label><span>Tipo/arma compatível</span><input name="compatibleWeapon" maxlength="80"></label>
+      </div>
+      <div class="form-grid inventory-specific-fields" data-inventory-specific="protecao" hidden>
+        <label><span>Bônus de defesa</span><input name="defense" maxlength="40"></label>
+        <label><span>Resistências</span><input name="resistance" maxlength="160"></label>
+      </div>
+      <label><span>Descrição e detalhes</span><textarea name="description" rows="3" maxlength="2000"></textarea></label>
+      <div class="form-actions"><button class="button button-primary" type="submit">Salvar item</button>
+        <button class="button button-outline" type="button" data-action="cancel-character-entry" data-entry-type="inventory">Cancelar</button></div>
+    </form>` : ""}
+  </section>`;
+}
+
+function renderOrderDescriptionTab(character, canEdit) {
+  const fields = character.fields || {};
+  const descriptionFields = [
+    ["appearance", "Aparência", "Nome, gênero, idade, descrição física..."],
+    ["personality", "Personalidade", "Traços marcantes, opiniões, ideais..."],
+    ["history", "Histórico", "Infância, relação com a família, contato com o Paranormal, eventos bons e ruins..."],
+    ["objective", "Objetivo", "Por que ele faz parte da Ordem? Porque luta contra o Outro Lado?"]
+  ];
+  return `<section class="character-entry-section">
+    <div class="panel-heading"><div><h2>Descrição do personagem</h2>
+      <p class="form-hint">Anotações e informações narrativas do agente.</p></div></div>
+    ${canEdit ? `<form class="content-panel form-panel" data-form="character-section" data-section="description" data-id="${escapeHtml(character.id)}">
+      <label><span>Anotações</span><textarea name="notes" rows="4" maxlength="5000" placeholder="Anotações pessoais do agente...">${escapeHtml(character.notes || "")}</textarea></label>
+      ${descriptionFields.map(([name, label, placeholder]) => `<label><span>${label}</span>
+        <textarea name="${name}" rows="4" maxlength="2000" placeholder="${placeholder}">${escapeHtml(fields[label] || "")}</textarea></label>`).join("")}
+      <div class="form-actions"><button class="button button-primary" type="submit">Salvar descrição</button></div>
+    </form>` : `<section class="content-panel character-description-list">
+      <article><h3>Anotações</h3><p>${escapeHtml(character.notes || "Sem anotações.")}</p></article>
+      ${descriptionFields.map(([, label]) => `<article><h3>${label}</h3><p>${escapeHtml(fields[label] || "Não informado.")}</p></article>`).join("")}
+    </section>`}
+  </section>`;
+}
+
+function renderCharacterTabs(sheetContent, combatContent, extraTabs = []) {
+  const tabs = [
+    { id: "ficha", label: "Ficha" },
+    { id: "combate", label: "Combate" },
+    ...extraTabs.map(({ id, label }) => ({ id, label }))
+  ];
+  return `<div class="character-tab-container" data-character-tabs>
+    <nav class="character-tabs" role="tablist" aria-label="Seções da ficha">
+      ${tabs.map(({ id, label }, index) => `<button class="character-tab-button ${index === 0 ? "is-current" : ""}"
+        id="character-tab-${id}" type="button" role="tab" aria-selected="${index === 0}"
+        aria-controls="character-panel-${id}" data-action="character-tab" data-tab="${id}" tabindex="${index === 0 ? "0" : "-1"}">${label}</button>`).join("")}
+    </nav>
+    <section class="character-tab-panel" id="character-panel-ficha" role="tabpanel"
+      aria-labelledby="character-tab-ficha" data-character-tab-panel="ficha">${sheetContent}</section>
+    ${combatContent}
+    ${extraTabs.map(({ id, content }) => `<section class="character-tab-panel" id="character-panel-${id}"
+      role="tabpanel" aria-labelledby="character-tab-${id}" data-character-tab-panel="${id}" hidden>${content}</section>`).join("")}
+  </div>`;
+}
+
+function renderGenericCombatPanel() {
+  return `<section class="character-tab-panel combat-tab-panel" id="character-panel-combate" role="tabpanel"
+    aria-labelledby="character-tab-combate" data-character-tab-panel="combate" hidden>
+    <div class="content-panel">${renderCombatRoller()}
+      <p class="form-hint">O cadastro de ataques será configurado quando as regras deste sistema forem definidas.</p>
+    </div>
+  </section>`;
+}
+
+function renderCharacter(id, sessionId = "") {
   const character = getCharacter(id);
   if (!character || !currentUser() || (character.owner !== currentUser().id && !canAccessCampaign(getCampaign(character.campaignId)))) {
     return pageLayout(`<section class="access-card"><p class="eyebrow">Ficha privada</p><h1>Ficha indisponível</h1>
       <p>Esta ficha não existe ou você não tem permissão para consultá-la.</p>${routeLink("#painel", "Voltar ao painel")}</section>`);
   }
   const campaign = getCampaign(character.campaignId);
+  const returnSession = data.sessions.find((session) =>
+    session.id === sessionId && session.campaignId === campaign?.id && session.status === "active"
+  );
+  const returnLink = returnSession && canAccessCampaign(campaign)
+    ? routeLink(`#sessao/${returnSession.id}`, "Voltar à sessão")
+    : campaign ? routeLink(`#campanha/${campaign.id}`, "Voltar à campanha") : routeLink("#painel", "Voltar ao painel");
+  if (character.system === "ordem") {
+    const activeSession = campaign && data.sessions.find((session) =>
+      session.campaignId === campaign.id && session.status === "active"
+    );
+    const canEditCharacter = character.owner === currentUser().id || canManageCampaign(campaign);
+    const extraTabs = [
+      { id: "habilidades", label: "Habilidades", content: renderOrderAbilityTab(character, canEditCharacter) },
+      { id: "rituais", label: "Rituais", content: renderOrderRitualTab(character, canEditCharacter) },
+      { id: "inventario", label: "Inventário", content: renderOrderInventoryTab(character, canEditCharacter) },
+      { id: "descricao", label: "Descrição", content: renderOrderDescriptionTab(character, canEditCharacter) }
+    ];
+    return pageLayout(`${pageHeader("Ordem Paranormal", escapeHtml(character.name),
+      campaign ? `Campanha: ${escapeHtml(campaign.name)}` : "Ficha sem campanha vinculada.",
+      character.owner === currentUser().id ? routeLink(`#ficha/${character.id}/editar`, "Editar ficha", "button button-primary") : "")}
+      ${renderCharacterTabs(
+        renderOrderCharacterSheet(character, campaign, { canEditResources: canEditCharacter, activeSession: Boolean(activeSession) }),
+        renderOrderCombatPanel(character, canEditCharacter),
+        extraTabs
+      )}
+      ${returnLink}`);
+  }
   const fields = Object.entries(character.fields || {}).map(([name, value]) => `<div class="character-stat"><span>${escapeHtml(name)}</span><strong>${escapeHtml(value || "—")}</strong></div>`).join("");
-  return pageLayout(`${pageHeader(escapeHtml(getSystemName(character.system)), escapeHtml(character.name),
+  const sheetSummary = classicSheetSystems[character.system]
+    ? renderClassicCharacterSheet(character, campaign)
+    : `<section class="content-panel"><h2>Resumo da ficha</h2><div class="character-stats">${fields}</div>
+        ${character.notes ? `<h3>Observações</h3><p>${escapeHtml(character.notes)}</p>` : ""}</section>`;
+  return pageLayout(`${pageHeader(getSystemName(character.system), escapeHtml(character.name),
     campaign ? `Campanha: ${escapeHtml(campaign.name)}` : "Ficha sem campanha vinculada.",
     character.owner === currentUser().id ? routeLink(`#ficha/${character.id}/editar`, "Editar ficha", "button button-primary") : "")}
-    <section class="content-panel"><h2>Campos da ficha</h2><div class="character-stats">${fields}</div>
-      ${character.notes ? `<h3>Observações</h3><p>${escapeHtml(character.notes)}</p>` : ""}
-    </section>
-    ${campaign ? routeLink(`#campanha/${campaign.id}`, "Voltar à campanha") : routeLink("#painel", "Voltar ao painel")}`);
+    ${renderCharacterTabs(
+      sheetSummary,
+      renderGenericCombatPanel()
+    )}
+    ${returnLink}`);
 }
 
 function renderActiveSession(id) {
@@ -441,25 +3243,22 @@ function renderActiveSession(id) {
     <span><strong>${escapeHtml(event.characterName)}</strong>: ${escapeHtml(event.field)} alterado de
     ${escapeHtml(event.before)} para ${escapeHtml(event.after)} por ${escapeHtml(event.author)}.</span></li>`).join("");
   const isMaster = canManageCampaign(campaign);
-  const ownCharacters = characters.filter((character) => character.owner === currentUser().id);
-  return pageLayout(`${pageHeader("Sessão em andamento", escapeHtml(campaign.name),
+  const characterItems = characters.map((character) => `<article class="list-card compact-card">
+    <div><h3>${escapeHtml(character.name)}</h3><p>${escapeHtml(getSystemName(character.system))}</p></div>
+    ${routeLink(`#ficha/${character.id}?sessao=${session.id}`, character.system === "ordem" ? "Abrir ficha e atualizar recursos e inventário" : "Abrir ficha")}
+  </article>`).join("");
+  return pageLayout(`${pageHeader(`Sessão ${getCampaignSessionNumber(session)} · em andamento`, escapeHtml(campaign.name),
     `Iniciada em ${formatDateTime(session.startedAt)}.`, routeLink(`#campanha/${campaign.id}`, "Voltar à campanha"))}
-    <p class="live-banner"><span class="status-dot"></span> Em andamento · alterações salvas nesta tela entram na linha do tempo.</p>
-    ${ownCharacters.length ? `<form class="content-panel form-panel" data-form="session-event" data-id="${session.id}">
-      <h2>Registrar alteração de ficha</h2><p class="form-hint">Somente valores salvos por este formulário são registrados. Campos ilustrativos.</p>
-      <div class="form-grid">
-        <label><span>Personagem</span><select name="characterId" required>${ownCharacters.map((character) => `<option value="${character.id}">${escapeHtml(character.name)}</option>`).join("")}</select></label>
-        <label><span>Campo alterado</span><input name="field" required placeholder="Ex.: Pontos de vida"></label>
-        <label><span>Novo valor</span><input name="after" required></label>
-      </div><div class="form-actions"><button class="button button-primary" type="submit">Salvar alteração e registrar</button></div>
-    </form>` : `<p class="empty-panel">Você ainda não vinculou uma ficha própria a esta campanha.</p>`}
+    <p class="live-banner"><span class="status-dot"></span> Sessão ativa · alterações de recursos e itens do inventário serão registradas automaticamente.</p>
+    <section class="content-panel"><div class="panel-heading"><h2>Fichas da campanha</h2></div>
+      <div class="list-stack">${characterItems || `<p class="empty-panel">Ainda não há fichas vinculadas a esta campanha.</p>`}</div>
+      <p class="form-hint">Jogadores podem atualizar as próprias fichas. O mestre pode atualizar os recursos de todas as fichas da campanha.</p>
+    </section>
     <section class="content-panel"><div class="panel-heading"><h2>Linha do tempo</h2><span class="status-chip">Registro automático</span></div>
       ${events ? `<ol class="timeline">${events}</ol>` : `<p class="empty-panel">Ainda não há alterações registradas nesta sessão.</p>`}
     </section>
-    ${isMaster ? `<form class="content-panel finish-form" data-form="finish-session" data-id="${session.id}">
-      <h2>Finalizar sessão</h2><label><span>Resumo escrito pelo mestre</span>
-      <textarea name="summary" rows="5" placeholder="Escreva o resumo da sessão.">${escapeHtml(session.masterSummary || "")}</textarea></label>
-      <button class="button button-primary" type="submit">Finalizar e salvar resumo</button></form>` : `<p class="form-hint">Somente o mestre pode finalizar esta sessão.</p>`}`);
+    ${isMaster ? `<p class="form-hint">Para encerrar esta sessão, volte à campanha e escolha “Encerrar sessão”. O resumo será obrigatório.</p>`
+      : `<p class="form-hint">Somente o mestre pode encerrar a sessão. O resumo e a linha do tempo ficarão disponíveis a todos os participantes.</p>`}`);
 }
 
 function automaticSummary(session) {
@@ -475,15 +3274,16 @@ function renderHistory(id) {
     return pageLayout(`<section class="access-card"><h1>Histórico indisponível</h1><p>Esta sessão não existe ou você não tem permissão para consultá-la.</p>${routeLink("#painel", "Voltar ao painel")}</section>`);
   }
   const events = [...session.events].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-  return pageLayout(`${pageHeader("Histórico da sessão", escapeHtml(campaign.name),
-    `Finalizada em ${formatDateTime(session.endedAt || session.startedAt)}.`, routeLink(`#campanha/${campaign.id}`, "Voltar à campanha"))}
+  return pageLayout(`${pageHeader(`Sessão ${getCampaignSessionNumber(session)} · resumo`, escapeHtml(campaign.name),
+    `Finalizada em ${formatDateTime(session.endedAt || session.startedAt)}.`,
+    routeLink(`#campanha/${campaign.id}`, "Voltar à campanha"))}
     <div class="summary-grid">
       <section class="content-panel"><p class="eyebrow">Texto escrito pelo mestre</p><h2>Resumo do mestre</h2>
         <p>${escapeHtml(session.masterSummary || "O mestre não registrou um resumo.")}</p></section>
       <section class="content-panel"><p class="eyebrow">Derivado dos eventos</p><h2>Resumo automático</h2>
         <p>${escapeHtml(automaticSummary(session))}</p></section>
     </div>
-    <section class="content-panel"><div class="panel-heading"><h2>Linha do tempo</h2><span class="status-chip">Eventos registrados</span></div>
+    <section class="content-panel"><div class="panel-heading"><h2>Linha do tempo da sessão ${getCampaignSessionNumber(session)}</h2><span class="status-chip">Eventos registrados</span></div>
       ${events.length ? `<ol class="timeline">${events.map((event) => `<li><time>${formatDateTime(event.createdAt)}</time>
         <span><strong>${escapeHtml(event.characterName)}</strong> · ${escapeHtml(event.field)}:
         ${escapeHtml(event.before)} → ${escapeHtml(event.after)} <small>por ${escapeHtml(event.author)}</small></span></li>`).join("")}</ol>`
@@ -659,6 +3459,90 @@ function routeFromHash() {
   return { page: page || "inicio", id: id || "", action: action || "", query: new URLSearchParams(query) };
 }
 
+function filterOrderCharacterEntries() {
+  const search = appPage.querySelector("[data-ability-filter]");
+  const abilityList = appPage.querySelector("[data-ability-list]");
+  if (search && abilityList) {
+    const term = search.value.trim().toLocaleLowerCase("pt-BR");
+    abilityList.querySelectorAll("[data-ability-card]").forEach((card) => {
+      card.hidden = !card.dataset.search.includes(term);
+    });
+    abilityList.querySelectorAll("[data-ability-group]").forEach((group) => {
+      group.hidden = !group.querySelector("[data-ability-card]:not([hidden])");
+    });
+    const emptyMessage = abilityList.querySelector("[data-ability-empty]");
+    if (emptyMessage) emptyMessage.hidden = Boolean(abilityList.querySelector("[data-ability-card]:not([hidden])"));
+  }
+  const circle = appPage.querySelector("[data-ritual-circle-filter]");
+  const element = appPage.querySelector("[data-ritual-element-filter]");
+  const ritualList = appPage.querySelector("[data-ritual-list]");
+  if (ritualList) {
+    ritualList.querySelectorAll("[data-ritual-card]").forEach((card) => {
+      card.hidden = Boolean((circle?.value && card.dataset.circle !== circle.value)
+        || (element?.value && card.dataset.element !== element.value));
+    });
+  }
+}
+
+function filterCatalog(catalogType) {
+  const panel = appPage.querySelector(`[data-catalog-panel="${catalogType}"]`);
+  if (!panel) return;
+
+  const searchInput = panel.querySelector(`[data-catalog-search="${catalogType}"]`);
+  const query = searchInput ? searchInput.value.trim().toLocaleLowerCase("pt-BR") : "";
+
+  if (catalogType === "ability") {
+    const trackSelect = panel.querySelector("[data-catalog-track]");
+    abilityCatalogState.query = query;
+    abilityCatalogState.track = trackSelect?.value || "";
+    abilityCatalogState.onlyAvailable = Boolean(panel.querySelector("[data-catalog-available]")?.checked);
+    if (abilityCatalogState.track) abilityCatalogState.group = "Trilha";
+    panel.querySelectorAll("[data-action='ability-group-chip']").forEach((chip) => {
+      chip.setAttribute("aria-pressed", String(chip.dataset.group === abilityCatalogState.group));
+    });
+    const cards = [...panel.querySelectorAll('[data-catalog-card="ability"]')];
+    let visibleCount = 0;
+    for (const card of cards) {
+      card.hidden = !abilityCatalogMatches({
+        group: card.dataset.group,
+        track: card.dataset.track,
+        added: card.dataset.added === "true",
+        status: card.dataset.status,
+        search: card.dataset.search || ""
+      }, abilityCatalogState);
+      if (!card.hidden) visibleCount += 1;
+    }
+    const count = panel.querySelector("[data-catalog-count]");
+    if (count) count.textContent = `Mostrando ${visibleCount} de ${cards.length} habilidades`;
+    const emptyMessage = panel.querySelector("[data-catalog-empty]");
+    if (emptyMessage) emptyMessage.hidden = visibleCount > 0;
+  } else if (catalogType === "ritual") {
+    const circleSelect = panel.querySelector("[data-catalog-circle]");
+    const elementSelect = panel.querySelector("[data-catalog-element]");
+    const selectedCircle = circleSelect ? circleSelect.value : "";
+    const selectedElement = elementSelect ? elementSelect.value : "";
+    const cards = panel.querySelectorAll('[data-catalog-card="ritual"]');
+    for (const card of cards) {
+      const matchSearch = !query || (card.dataset.search && card.dataset.search.includes(query));
+      const matchCircle = !selectedCircle || card.dataset.circle === selectedCircle;
+      const matchElement = !selectedElement || card.dataset.element === selectedElement;
+      card.hidden = !(matchSearch && matchCircle && matchElement);
+    }
+  } else if (catalogType === "inventory") {
+    const typeSelect = panel.querySelector("[data-catalog-type-select]");
+    const categorySelect = panel.querySelector("[data-catalog-category-select]");
+    const selectedType = typeSelect ? typeSelect.value : "";
+    const selectedCategory = categorySelect ? categorySelect.value : "";
+    const cards = panel.querySelectorAll('[data-catalog-card="inventory"]');
+    for (const card of cards) {
+      const matchSearch = !query || (card.dataset.search && card.dataset.search.includes(query));
+      const matchType = !selectedType || card.dataset.itemType === selectedType;
+      const matchCategory = !selectedCategory || card.dataset.itemCategory === selectedCategory;
+      card.hidden = !(matchSearch && matchType && matchCategory);
+    }
+  }
+}
+
 async function renderRoute() {
   const route = routeFromHash();
   const requestedHash = location.hash;
@@ -674,7 +3558,7 @@ async function renderRoute() {
     appPage.classList.remove("hidden");
     appPage.innerHTML = pageLayout(`<section class="access-card" role="alert">
       <p class="eyebrow">Falha de conexão</p><h1>Não foi possível carregar as informações</h1>
-      <p>${escapeHtml(bootstrapError)}</p><p>Confira se o servidor está em execução e tente novamente.</p>
+      <p>${escapeHtml(bootstrapError)}</p><p>Confira a configuração do Supabase, as migrações e se o servidor está em execução.</p>
       <button class="button button-outline" type="button" data-action="retry">Tentar novamente</button>
     </section>`);
     return;
@@ -684,7 +3568,8 @@ async function renderRoute() {
   homeView.classList.toggle("hidden", !isHome);
   appPage.classList.toggle("hidden", isHome);
   siteNav.querySelectorAll("a").forEach((link) => {
-    link.classList.toggle("is-current", link.getAttribute("href") === `#${route.page}`);
+    link.classList.toggle("is-current", link.getAttribute("href") === `#${route.page}`
+      || (link.getAttribute("href") === "#fichas" && route.page === "ficha"));
   });
   if (isHome) {
     appPage.innerHTML = "";
@@ -696,7 +3581,7 @@ async function renderRoute() {
     }
     return;
   }
-  if (!currentUser() && ["painel", "campanha", "campanhas", "minhas-campanhas", "ficha", "sessao", "historico", "gestao-mesa"].includes(route.page)) {
+  if (!currentUser() && ["painel", "fichas", "campanha", "campanhas", "minhas-campanhas", "nova-campanha", "ficha", "sessao", "historico", "gestao-mesa"].includes(route.page)) {
     appPage.innerHTML = pageLayout(requireLogin());
     window.scrollTo(0, 0);
     return;
@@ -706,19 +3591,25 @@ async function renderRoute() {
     case "painel":
       appPage.innerHTML = renderDashboard();
       break;
+    case "fichas":
+      appPage.innerHTML = renderCharacterList();
+      break;
     case "campanhas":
       appPage.innerHTML = renderCampaignList();
       break;
     case "minhas-campanhas":
       appPage.innerHTML = renderCampaignList();
       break;
+    case "nova-campanha":
+      appPage.innerHTML = renderCampaignCreationForm();
+      break;
     case "campanha":
-      appPage.innerHTML = renderCampaign(route.id);
+      appPage.innerHTML = renderCampaign(route.id, route.action === "encerrar");
       break;
     case "ficha":
       if (route.action === "editar") appPage.innerHTML = renderCharacterForm(route.id);
       else if (route.id === "nova") appPage.innerHTML = renderCharacterForm("nova", route.query.get("campanha"));
-      else appPage.innerHTML = renderCharacter(route.id);
+      else appPage.innerHTML = renderCharacter(route.id, route.query.get("sessao") || "");
       break;
     case "sessao":
       appPage.innerHTML = renderActiveSession(route.id);
@@ -738,6 +3629,8 @@ async function renderRoute() {
     default:
       appPage.innerHTML = pageLayout(`<section class="access-card"><h1>Página não encontrada</h1>${routeLink("#inicio", "Ir para o início")}</section>`);
   }
+  const orderCharacterForm = appPage.querySelector('form[data-form="character"][data-system="ordem"]');
+  if (orderCharacterForm) updateOrderCharacterForm(orderCharacterForm);
   window.scrollTo(0, 0);
 }
 
@@ -764,6 +3657,343 @@ function filterPublicTableCards() {
   }
 }
 
+function getOrderFormAttributes(form) {
+  return Object.fromEntries(orderAttributes.map(({ key }) => [
+    key,
+    Number(form.elements.namedItem(`attribute${key}`)?.value || 0)
+  ]));
+}
+
+function getOrderFormStats(form) {
+  const classId = form.elements.namedItem("orderClass").value;
+  const customStats = classId === "mundano" ? {
+    pv: Number(form.elements.namedItem("mundanoPV").value || 0),
+    pvPerNex: Number(form.elements.namedItem("mundanoPVPerNex").value || 0),
+    pe: Number(form.elements.namedItem("mundanoPE").value || 0),
+    pePerNex: Number(form.elements.namedItem("mundanoPEPerNex").value || 0),
+    san: Number(form.elements.namedItem("mundanoSAN").value || 0),
+    sanPerNex: Number(form.elements.namedItem("mundanoSANPerNex").value || 0)
+  } : {};
+  const nex = Number(form.elements.namedItem("nex").value || 5);
+  return calculateOrderStats(classId, getOrderFormAttributes(form), nex, customStats);
+}
+
+function updateOrderCharacterForm(form) {
+  const attributes = getOrderFormAttributes(form);
+  const zeros = Object.values(attributes).filter((value) => value === 0).length;
+  const pointsSpent = Object.values(attributes).reduce((total, value) => total + Math.max(0, value - 1), 0);
+  const pointsRemaining = 4 + Math.min(zeros, 1) - pointsSpent;
+  const remainingLabel = form.querySelector("[data-order-points-remaining]");
+  if (remainingLabel) remainingLabel.textContent = String(pointsRemaining);
+
+  const classId = form.elements.namedItem("orderClass").value;
+  const requiredSkillCount = classId === "mundano"
+    ? Number(form.elements.namedItem("mundanoSkillCount").value || 0)
+    : Math.min(10, (orderClasses[classId]?.skillCount || 0) + attributes.INT);
+  form.querySelectorAll("[data-order-skill-slot]").forEach((slot, index) => {
+    const select = slot.querySelector("select");
+    const enabled = index < requiredSkillCount;
+    slot.hidden = !enabled;
+    select.disabled = !enabled;
+    select.required = enabled;
+  });
+
+  const isCombatant = classId === "combatente";
+  form.querySelectorAll("[data-order-fixed-skills]").forEach((label) => {
+    const select = label.querySelector("select");
+    label.hidden = !isCombatant;
+    select.disabled = !isCombatant;
+    select.required = isCombatant;
+  });
+  form.querySelector("[data-order-occultist-skills]").hidden = classId !== "ocultista";
+  const mundanoFields = form.querySelector("[data-order-mundano-fields]");
+  mundanoFields.hidden = classId !== "mundano";
+  mundanoFields.querySelectorAll("[data-mundano-stat]").forEach((input) => {
+    input.disabled = classId !== "mundano";
+    input.required = classId === "mundano";
+  });
+
+  const stats = getOrderFormStats(form);
+  for (const [key, value] of Object.entries(stats)) {
+    const output = form.querySelector(`[data-order-stat="${key}"]`);
+    if (output) output.textContent = key === "carry" ? `${value} espaços` : String(value);
+  }
+  const trained = new Set([
+    form.elements.namedItem("originSkill1").value,
+    form.elements.namedItem("originSkill2").value,
+    form.elements.namedItem("fixedSkill1").value,
+    form.elements.namedItem("fixedSkill2").value,
+    ...(classId === "ocultista" ? ["Ocultismo", "Vontade"] : []),
+    ...[...form.querySelectorAll(".order-class-skill select:not(:disabled)")].map((select) => select.value)
+  ].filter(Boolean));
+  form.querySelector('[data-order-stat="block"]').textContent = trained.has("Fortitude") ? "5" : "0";
+  form.querySelector('[data-order-stat="dodge"]').textContent = String(10 + attributes.AGI + (trained.has("Reflexos") ? 5 : 0));
+  for (const [inputName, maximum] of [["currentPV", stats.hp], ["currentPE", stats.pe], ["currentSAN", stats.san]]) {
+    const input = form.elements.namedItem(inputName);
+    input.max = String(maximum);
+    if (input.dataset.savedValue !== "true" && input.dataset.userEdited !== "true") input.value = String(maximum);
+    input.setCustomValidity(input.value && Number(input.value) > maximum ? `O valor atual não pode ultrapassar ${maximum}.` : "");
+  }
+}
+
+function setOrderCharacterStep(form, step) {
+  form.dataset.currentStep = String(step);
+  form.querySelectorAll("[data-order-step]").forEach((panel) => {
+    panel.hidden = Number(panel.dataset.orderStep) !== step;
+  });
+  form.querySelectorAll(".order-step-button").forEach((button) => {
+    const current = Number(button.dataset.step) === step;
+    button.classList.toggle("is-current", current);
+    button.setAttribute("aria-current", current ? "step" : "false");
+  });
+}
+
+function validateOrderStep(form, step) {
+  const panel = form.querySelector(`[data-order-step="${step}"]`);
+  const fields = [...panel.querySelectorAll("input, select, textarea")].filter((input) =>
+    !input.disabled && input.type !== "hidden" && !input.closest(".order-origin-builder")
+      && !input.matches("[data-origin-search], [data-origin-choice]")
+  );
+  const invalid = fields.find((input) => !input.checkValidity());
+  if (invalid) {
+    setOrderCharacterStep(form, step);
+    invalid.reportValidity();
+    return false;
+  }
+  if (step === 0) {
+    const attributes = getOrderFormAttributes(form);
+    const zeros = Object.values(attributes).filter((value) => value === 0).length;
+    const spent = Object.values(attributes).reduce((total, value) => total + Math.max(0, value - 1), 0);
+    if (zeros > 1 || spent > 4 + Math.min(zeros, 1)) {
+      showPageNotice("Revise a distribuição: no máximo um atributo pode ficar em 0 e os pontos disponíveis não podem ser excedidos.", true);
+      return false;
+    }
+  }
+  if (step === 1 && form.dataset.selectedOrigin !== "true") {
+    showPageNotice("Cadastre ou escolha uma origem antes de continuar.", true);
+    return false;
+  }
+  if (step === 1) {
+    const selectedCard = form.querySelector(".order-origin-card.is-selected");
+    const choices = [...(selectedCard?.querySelectorAll("[data-origin-choice]") || [])];
+    if (choices.some((select) => !select.checkValidity())) {
+      choices.find((select) => !select.checkValidity()).reportValidity();
+      return false;
+    }
+    if (form.elements.namedItem("originSkill1").value === form.elements.namedItem("originSkill2").value) {
+      showPageNotice("Escolha duas perícias diferentes para a origem.", true);
+      return false;
+    }
+  }
+  if (step === 2) {
+    const classId = form.elements.namedItem("orderClass").value;
+    const classSkills = [
+      form.elements.namedItem("fixedSkill1").value,
+      form.elements.namedItem("fixedSkill2").value,
+      ...(classId === "ocultista" ? ["Ocultismo", "Vontade"] : []),
+      ...[...form.querySelectorAll(".order-class-skill select:not(:disabled)")].map((select) => select.value)
+    ].filter(Boolean);
+    if (new Set(classSkills).size !== classSkills.length) {
+      showPageNotice("Escolha perícias de classe diferentes para não duplicar treinamento.", true);
+      return false;
+    }
+  }
+  return true;
+}
+
+function buildOrderCharacterFields(form, values) {
+  const attributes = getOrderFormAttributes(form);
+  const classId = values.get("orderClass");
+  const nex = Number(values.get("nex") || 5);
+  const customStats = classId === "mundano" ? {
+    pv: Number(values.get("mundanoPV")),
+    pvPerNex: Number(values.get("mundanoPVPerNex")),
+    pe: Number(values.get("mundanoPE")),
+    pePerNex: Number(values.get("mundanoPEPerNex")),
+    san: Number(values.get("mundanoSAN")),
+    sanPerNex: Number(values.get("mundanoSANPerNex"))
+  } : {};
+  const stats = calculateOrderStats(classId, attributes, nex, customStats);
+  const originSkills = [values.get("originSkill1"), values.get("originSkill2")];
+  const classSkillChoices = [...form.querySelectorAll(".order-class-skill select:not(:disabled)")].map((select) => select.value);
+  const classSkills = [
+    values.get("fixedSkill1"),
+    values.get("fixedSkill2"),
+    ...(classId === "ocultista" ? ["Ocultismo", "Vontade"] : []),
+    ...classSkillChoices
+  ].filter(Boolean);
+  const trainedSkills = [...new Set([...originSkills, ...classSkills])];
+  const currentValue = (name, maximum) => {
+    const value = values.get(name);
+    return value === null || value === "" ? maximum : Math.min(Number(value), maximum);
+  };
+  const fields = {
+    "Força": String(attributes.FOR),
+    "Agilidade": String(attributes.AGI),
+    "Intelecto": String(attributes.INT),
+    "Vigor": String(attributes.VIG),
+    "Presença": String(attributes.PRE),
+    "Origem": values.get("originName").trim(),
+    "Fonte da origem": values.get("originSource").trim(),
+    "Descrição da origem": values.get("originDescription").trim(),
+    "Perícia de origem 1": values.get("originSkill1"),
+    "Perícia de origem 2": values.get("originSkill2"),
+    "Perícias da origem": originSkills.join("; "),
+    "Poder da origem": values.get("originPower").trim(),
+    "Efeito do poder de origem": values.get("originPowerNotes").trim(),
+    "Classe": orderClasses[classId]?.name || "Mundano",
+    "Classe ID": classId,
+    "Perícia fixa 1": values.get("fixedSkill1") || "",
+    "Perícia fixa 2": values.get("fixedSkill2") || "",
+    "Perícias de classe": classSkills.join("; "),
+    "Perícias treinadas": trainedSkills.map((skill) => `${skill} (+5 base)`).join("\n"),
+    "NEX": `${nex}%`,
+    "PV máximo": String(stats.hp),
+    "PV atual": String(currentValue("currentPV", stats.hp)),
+    "PE máximo": String(stats.pe),
+    "PE atual": String(currentValue("currentPE", stats.pe)),
+    "SAN máxima": String(stats.san),
+    "SAN atual": String(currentValue("currentSAN", stats.san)),
+    "Defesa sem proteção": String(stats.defense),
+    "DT de rituais": String(stats.ritualDifficulty),
+    "Carga máxima": `${stats.carry} espaços`,
+    "Bloqueio": String(trainedSkills.includes("Fortitude") ? 5 : 0),
+    "Esquiva": String(10 + attributes.AGI + (trainedSkills.includes("Reflexos") ? 5 : 0)),
+    "Jogador": values.get("playerName").trim(),
+    "Aparência": values.get("appearance").trim(),
+    "Personalidade": values.get("personality").trim(),
+    "Histórico": values.get("background").trim(),
+    "Objetivo": values.get("objective").trim(),
+    "Ataques": JSON.parse(values.get("attacks") || "[]"),
+    ...Object.fromEntries(classSkillChoices.map((skill, index) => [`Perícia de classe ${index + 1}`, skill]))
+  };
+  if (classId === "mundano") {
+    fields["Mundano perícias de classe"] = String(values.get("mundanoSkillCount"));
+    fields["Mundano PV inicial"] = String(customStats.pv);
+    fields["Mundano PV por NEX"] = String(customStats.pvPerNex);
+    fields["Mundano PE inicial"] = String(customStats.pe);
+    fields["Mundano PE por NEX"] = String(customStats.pePerNex);
+    fields["Mundano SAN inicial"] = String(customStats.san);
+    fields["Mundano SAN por NEX"] = String(customStats.sanPerNex);
+  }
+  return fields;
+}
+
+function updateInventorySpecificFields(form) {
+  const selectedType = form.elements.type.value;
+  form.querySelectorAll("[data-inventory-specific]").forEach((group) => {
+    group.hidden = group.dataset.inventorySpecific !== selectedType;
+    if (group.hidden) group.querySelectorAll("input").forEach((input) => { input.value = ""; });
+  });
+}
+
+function openCharacterEntryEditor(form, entry = null, itemType = "") {
+  form.reset();
+  form.dataset.id = entry?.id || "";
+  form.querySelector("[data-entry-form-title]").textContent = entry
+    ? `Editar ${form.dataset.entryType === "inventory" ? "item" : form.dataset.entryType === "ritual" ? "ritual" : "habilidade"}`
+    : `Novo ${form.dataset.entryType === "inventory" ? "item" : form.dataset.entryType === "ritual" ? "ritual" : "habilidade"}`;
+  for (const [name, value] of Object.entries(entry || {})) {
+    if (form.elements[name]) form.elements[name].value = value ?? "";
+  }
+  if (!entry && itemType && form.elements.type) form.elements.type.value = itemType;
+  if (form.elements.type) updateInventorySpecificFields(form);
+  form.hidden = false;
+  form.scrollIntoView({ behavior: "smooth", block: "center" });
+  form.elements.name.focus({ preventScroll: true });
+}
+
+function getCharacterEntryList(character, type) {
+  if (type === "ability") return Array.isArray(character.fields?.Habilidades)
+    ? character.fields.Habilidades.filter((entry) => entry && typeof entry === "object" && !Array.isArray(entry))
+    : [];
+  if (type === "ritual") return Array.isArray(character.fields?.Rituais)
+    ? character.fields.Rituais.filter((entry) => entry && typeof entry === "object" && !Array.isArray(entry))
+    : [];
+  if (type === "inventory") return getOrderInventory(character).items;
+  throw new Error("Tipo de conteúdo inválido.");
+}
+
+function characterEntryFromForm(form) {
+  const values = new FormData(form);
+  const entry = {
+    id: form.dataset.id || crypto.randomUUID(),
+    name: String(values.get("name") || "").trim()
+  };
+  if (form.dataset.entryType === "ability") {
+    return {
+      ...entry,
+      category: String(values.get("category") || "Própria"),
+      description: String(values.get("description") || "").trim()
+    };
+  }
+  if (form.dataset.entryType === "ritual") {
+    return {
+      ...entry,
+      element: String(values.get("element") || ""),
+      circle: Number(values.get("circle")),
+      execution: String(values.get("execution") || "").trim(),
+      range: String(values.get("range") || "").trim(),
+      target: String(values.get("target") || "").trim(),
+      duration: String(values.get("duration") || "").trim(),
+      resistance: String(values.get("resistance") || "").trim(),
+      description: String(values.get("description") || "").trim()
+    };
+  }
+  if (form.dataset.entryType === "inventory") {
+    return {
+      ...entry,
+      type: String(values.get("type") || ""),
+      category: String(values.get("category") || ""),
+      quantity: Number(values.get("quantity")),
+      spaces: Number(values.get("spaces")),
+      capacityBonus: Number(values.get("capacityBonus")),
+      damage: String(values.get("damage") || "").trim(),
+      critical: String(values.get("critical") || "").trim(),
+      range: String(values.get("range") || "").trim(),
+      damageType: String(values.get("damageType") || "").trim(),
+      ammunition: String(values.get("ammunition") || "").trim(),
+      compatibleWeapon: String(values.get("compatibleWeapon") || "").trim(),
+      defense: String(values.get("defense") || "").trim(),
+      resistance: String(values.get("resistance") || "").trim(),
+      description: String(values.get("description") || "").trim()
+    };
+  }
+  throw new Error("Tipo de conteúdo inválido.");
+}
+
+async function saveCharacterSection(characterId, section, value) {
+  if (section === "inventory") {
+    const optionalInteger = (rawValue, field) => {
+      if (rawValue === "" || rawValue === null || rawValue === undefined) return null;
+      const number = Number(rawValue);
+      if (!Number.isSafeInteger(number)) throw new Error(`Informe um valor inteiro válido para ${field}.`);
+      return number;
+    };
+    value = {
+      ...value,
+      prestige: optionalInteger(value.prestige, "pontos de prestígio"),
+      itemLimits: Object.fromEntries(orderItemCategories.map((category) => {
+        return [category, optionalInteger(value.itemLimits?.[category], `limite da categoria ${category}`)];
+      }))
+    };
+  }
+  await apiRequest(`/characters/${characterId}/section`, {
+    method: "PATCH",
+    body: JSON.stringify({ section, value })
+  });
+  const openPanelType = window.sessionStorage?.getItem("openCatalogPanel");
+  await renderRoute();
+  const tabBySection = { abilities: "habilidades", rituals: "rituais", inventory: "inventario", description: "descricao" };
+  const tabs = appPage.querySelector("[data-character-tabs]");
+  if (tabs && tabBySection[section]) setCharacterTab(tabs, tabBySection[section]);
+  if (openPanelType) {
+    window.sessionStorage?.removeItem("openCatalogPanel");
+    const panel = appPage.querySelector(`[data-catalog-panel="${openPanelType}"]`);
+    if (panel) panel.hidden = false;
+  }
+}
+
 async function handlePageSubmit(event) {
   const form = event.target.closest("form[data-form]");
   if (!form) return;
@@ -771,6 +4001,11 @@ async function handlePageSubmit(event) {
   const formType = form.dataset.form;
   const values = new FormData(form);
   try {
+    if (formType === "character-attacks") {
+      await saveCharacterAttack(form);
+      return;
+    }
+
     if (formType === "campaign") {
       const result = await apiRequest("/campaigns", {
         method: "POST",
@@ -786,11 +4021,28 @@ async function handlePageSubmit(event) {
 
     if (formType === "character") {
       const system = values.get("system");
-      const fields = {
-        [systems[system].extra]: values.get("extra").trim(),
-        "Pontos de vida": values.get("hp"),
-        [systems[system].resource]: values.get("resource").trim()
-      };
+      if (system === "ordem") {
+        updateOrderCharacterForm(form);
+        for (let step = 0; step < 4; step += 1) {
+          if (!validateOrderStep(form, step)) return;
+        }
+        const payload = {
+          name: values.get("name").trim(),
+          system,
+          campaignId: values.get("campaignId") || null,
+          fields: buildOrderCharacterFields(form, values),
+          notes: values.get("notes").trim()
+        };
+        const characterId = form.dataset.id;
+        const result = await apiRequest(characterId ? `/characters/${characterId}` : "/characters", {
+          method: characterId ? "PATCH" : "POST",
+          body: JSON.stringify(payload)
+        });
+        location.hash = payload.campaignId ? `campanha/${payload.campaignId}` : `ficha/${result.character.id}`;
+        return;
+      }
+      if (!classicSheetSystems[system]) throw new Error("Escolha um sistema válido para a ficha.");
+      const fields = buildClassicCharacterFields(form, form.dataset.id ? getCharacter(form.dataset.id) : null);
       const payload = {
         name: values.get("name").trim(),
         system,
@@ -807,6 +4059,92 @@ async function handlePageSubmit(event) {
       return;
     }
 
+    if (formType === "character-resources") {
+      await apiRequest(`/characters/${form.dataset.id}/resources`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          hp: Number(values.get("hp")),
+          pe: Number(values.get("pe")),
+          san: Number(values.get("san"))
+        })
+      });
+      await renderRoute();
+      return;
+    }
+
+    if (formType === "character-section") {
+      const characterId = form.dataset.id;
+      const section = form.dataset.section;
+      let value;
+      if (section === "inventory") {
+        const character = getCharacter(characterId);
+        if (!character) throw new Error("Ficha não encontrada.");
+        const inventory = getOrderInventory(character);
+        const optionalInteger = (name, maximum) => {
+          const raw = String(values.get(name) || "").trim();
+          if (!raw) return null;
+          const number = Number(raw);
+          if (!Number.isSafeInteger(number) || number < 0 || number > maximum) {
+            throw new Error(`Informe um valor válido para ${name}.`);
+          }
+          return number;
+        };
+        value = {
+          prestige: optionalInteger("prestige", 999999),
+          rank: String(values.get("rank") || "").trim(),
+          creditLimit: String(values.get("creditLimit") || "").trim(),
+          capacity: Number(values.get("capacity")),
+          itemLimits: Object.fromEntries(orderItemCategories.map((category) => [
+            category, optionalInteger(`limit${category}`, 999)
+          ]))
+        };
+        if (!Number.isSafeInteger(value.capacity) || value.capacity < 0 || value.capacity > 9999) {
+          throw new Error("Informe uma carga base máxima entre 0 e 9999.");
+        }
+      } else if (section === "description") {
+        value = {
+          notes: String(values.get("notes") || "").trim(),
+          appearance: String(values.get("appearance") || "").trim(),
+          personality: String(values.get("personality") || "").trim(),
+          history: String(values.get("history") || "").trim(),
+          objective: String(values.get("objective") || "").trim()
+        };
+      } else {
+        throw new Error("Seção da ficha inválida.");
+      }
+      await saveCharacterSection(characterId, section, value);
+      showPageNotice("Alterações salvas.");
+      return;
+    }
+
+    if (formType === "character-entry") {
+      if (!form.reportValidity()) return;
+      const entry = characterEntryFromForm(form);
+      if (!entry.name) throw new Error("Informe um nome.");
+      const character = getCharacter(routeFromHash().id);
+      if (!character) throw new Error("Ficha não encontrada.");
+      const entryType = form.dataset.entryType;
+      const entries = getCharacterEntryList(character, entryType);
+      const nextEntries = form.dataset.id
+        ? entries.map((item) => item.id === form.dataset.id ? entry : item)
+        : [...entries, entry];
+      let section;
+      let value;
+      if (entryType === "ability") {
+        section = "abilities";
+        value = nextEntries;
+      } else if (entryType === "ritual") {
+        section = "rituals";
+        value = nextEntries;
+      } else {
+        section = "inventory";
+        value = { ...getOrderInventory(character), items: nextEntries };
+      }
+      await saveCharacterSection(character.id, section, value);
+      showPageNotice("Alterações salvas.");
+      return;
+    }
+
     if (formType === "invite") {
       await apiRequest(`/campaigns/${routeFromHash().id}/members`, {
         method: "POST",
@@ -816,23 +4154,12 @@ async function handlePageSubmit(event) {
       return;
     }
 
-    if (formType === "session-event") {
-      await apiRequest(`/sessions/${form.dataset.id}/events`, {
-        method: "POST",
-        body: JSON.stringify({
-          characterId: values.get("characterId"),
-          field: values.get("field").trim(),
-          after: values.get("after").trim()
-        })
-      });
-      await renderRoute();
-      return;
-    }
-
     if (formType === "finish-session") {
+      const summary = values.get("summary").trim();
+      if (!summary) throw new Error("Escreva um resumo antes de finalizar a sessão.");
       await apiRequest(`/sessions/${form.dataset.id}/finish`, {
         method: "POST",
-        body: JSON.stringify({ summary: values.get("summary").trim() })
+        body: JSON.stringify({ summary })
       });
       location.hash = `historico/${form.dataset.id}`;
       return;
@@ -893,8 +4220,403 @@ async function handlePageClick(event) {
   if (!actionButton) return;
   const action = actionButton.dataset.action;
 
+  if (action === "delete-character") {
+    const character = getCharacter(actionButton.dataset.id);
+    if (!character || character.owner !== currentUser()?.id) {
+      showPageNotice("Você só pode excluir fichas próprias.", true);
+      return;
+    }
+    const confirmed = window.confirm(
+      `Excluir a ficha "${character.name}"? Esta ação não pode ser desfeita.${character.campaignId ? " A ficha também deixará de aparecer na campanha." : ""}`
+    );
+    if (!confirmed) return;
+    actionButton.disabled = true;
+    try {
+      await apiRequest(`/characters/${character.id}`, { method: "DELETE" });
+      await renderRoute();
+    } catch (error) {
+      actionButton.disabled = false;
+      showPageNotice(error.message, true);
+    }
+    return;
+  }
+
+  if (action === "character-tab") {
+    setCharacterTab(actionButton.closest("[data-character-tabs]"), actionButton.dataset.tab);
+    return;
+  }
+
+  if (action === "ability-group-chip") {
+    const panel = actionButton.closest("[data-catalog-panel]");
+    abilityCatalogState.group = actionButton.dataset.group || "";
+    const trackSelect = panel?.querySelector("[data-catalog-track]");
+    if (trackSelect && abilityCatalogState.group !== "Trilha") trackSelect.value = "";
+    filterCatalog("ability");
+    return;
+  }
+
+  if (action === "toggle-catalog") {
+    const catalogType = actionButton.dataset.catalogType || actionButton.dataset.catalogTarget;
+    const panel = appPage.querySelector(`[data-catalog-panel="${catalogType}"]`);
+    if (panel) {
+      panel.hidden = !panel.hidden;
+      if (!panel.hidden) {
+        const searchInput = panel.querySelector(`[data-catalog-search="${catalogType}"]`);
+        if (searchInput) searchInput.focus();
+      }
+    }
+    return;
+  }
+
+  if (action === "close-catalog") {
+    const catalogType = actionButton.dataset.catalogType || actionButton.dataset.catalogTarget;
+    const panel = appPage.querySelector(`[data-catalog-panel="${catalogType}"]`);
+    if (panel) panel.hidden = true;
+    return;
+  }
+
+  if (action === "add-catalog-item") {
+    const character = getCharacter(routeFromHash().id);
+    if (!character) {
+      showPageNotice("Ficha não encontrada.", true);
+      return;
+    }
+    const type = actionButton.dataset.catalogType;
+    const id = actionButton.dataset.catalogId;
+    actionButton.disabled = true;
+
+    try {
+      window.sessionStorage?.setItem("openCatalogPanel", type);
+      if (type === "ability") {
+        const item = getOrderAbilitiesCatalog().find((entry) => entry.id === id);
+        if (!item) throw new Error("Habilidade não encontrada no compêndio.");
+        const entries = getCharacterEntryList(character, "ability");
+        if (entries.some((entry) => entry.name.toLocaleLowerCase("pt-BR") === item.name.toLocaleLowerCase("pt-BR"))) {
+          throw new Error(`A habilidade "${item.name}" já está na ficha.`);
+        }
+        const newAbility = {
+          id: crypto.randomUUID(),
+          name: item.name,
+          category: item.category || "Própria",
+          description: item.description || ""
+        };
+        await saveCharacterSection(character.id, "abilities", [...entries, newAbility]);
+        showPageNotice(`Habilidade "${item.name}" adicionada à ficha.`);
+      } else if (type === "ritual") {
+        const item = getOrderRitualsCatalog().find((entry) => entry.id === id);
+        if (!item) throw new Error("Ritual não encontrado no grimório.");
+        const entries = getCharacterEntryList(character, "ritual");
+        if (entries.some((entry) => entry.name.toLocaleLowerCase("pt-BR") === item.name.toLocaleLowerCase("pt-BR"))) {
+          throw new Error(`O ritual "${item.name}" já foi aprendido.`);
+        }
+        const newRitual = {
+          id: crypto.randomUUID(),
+          name: item.name,
+          element: item.element || "",
+          circle: Number(item.circle) || 1,
+          execution: item.execution || "",
+          range: item.range || "",
+          target: item.target || "",
+          duration: item.duration || "",
+          resistance: item.resistance || "",
+          description: item.description || ""
+        };
+        await saveCharacterSection(character.id, "rituals", [...entries, newRitual]);
+        showPageNotice(`Ritual "${item.name}" aprendido!`);
+      } else if (type === "inventory") {
+        const item = getOrderInventoryCatalog().find((entry) => entry.id === id);
+        if (!item) throw new Error("Item não encontrado no arsenal.");
+        const inventory = getOrderInventory(character);
+        const newItem = {
+          id: crypto.randomUUID(),
+          name: item.name,
+          type: item.type || "geral",
+          category: item.category || "0",
+          quantity: Number(item.quantity) || 1,
+          spaces: Number(item.spaces) || 0,
+          capacityBonus: Number(item.capacityBonus) || 0,
+          damage: item.damage || "",
+          critical: item.critical || "",
+          range: item.range || "",
+          damageType: item.damageType || "",
+          ammunition: item.ammunition || "",
+          compatibleWeapon: item.compatibleWeapon || "",
+          defense: item.defense || "",
+          resistance: item.resistance || "",
+          description: item.description || ""
+        };
+        await saveCharacterSection(character.id, "inventory", {
+          ...inventory,
+          items: [...inventory.items, newItem]
+        });
+        showPageNotice(`"${item.name}" adicionado ao inventário.`);
+      }
+    } catch (error) {
+      window.sessionStorage?.removeItem("openCatalogPanel");
+      actionButton.disabled = false;
+      showPageNotice(error.message, true);
+    }
+    return;
+  }
+
+  if (action === "new-character-entry" || action === "edit-character-entry") {
+    const type = actionButton.dataset.entryType;
+    const editor = appPage.querySelector(`form[data-form="character-entry"][data-entry-type="${type}"]`);
+    if (!editor) return;
+    const character = getCharacter(routeFromHash().id);
+    if (!character) {
+      showPageNotice("Ficha não encontrada.", true);
+      return;
+    }
+    const entry = action === "edit-character-entry"
+      ? getCharacterEntryList(character, type).find((item) => item.id === actionButton.dataset.id)
+      : null;
+    if (action === "edit-character-entry" && !entry) {
+      showPageNotice("Este conteúdo não está mais disponível para edição.", true);
+      return;
+    }
+    openCharacterEntryEditor(editor, entry, actionButton.dataset.itemType || "");
+    return;
+  }
+
+  if (action === "cancel-character-entry") {
+    const editor = appPage.querySelector(`form[data-form="character-entry"][data-entry-type="${actionButton.dataset.entryType}"]`);
+    if (editor) editor.hidden = true;
+    return;
+  }
+
+  if (action === "remove-character-entry") {
+    const type = actionButton.dataset.entryType;
+    const character = getCharacter(routeFromHash().id);
+    if (!character) {
+      showPageNotice("Ficha não encontrada.", true);
+      return;
+    }
+    if (!window.confirm("Remover este conteúdo da ficha?")) return;
+    const entry = getCharacterEntryList(character, type).find((item) => item.id === actionButton.dataset.id);
+    if (!entry) {
+      showPageNotice("Este conteúdo já não está na ficha.", true);
+      return;
+    }
+    const nextEntries = getCharacterEntryList(character, type).filter((item) => item.id !== entry.id);
+    const section = type === "ability" ? "abilities" : type === "ritual" ? "rituals" : "inventory";
+    const value = type === "inventory"
+      ? { ...getOrderInventory(character), items: nextEntries }
+      : nextEntries;
+    try {
+      await saveCharacterSection(character.id, section, value);
+      showPageNotice(type === "inventory" ? "Item removido." : "Conteúdo removido.");
+    } catch (error) {
+      showPageNotice(error.message, true);
+    }
+    return;
+  }
+
+  if (action === "roll-dice") {
+    const roller = actionButton.closest("[data-dice-roller]");
+    const count = Number(roller.querySelector("[data-dice-count]").value);
+    const sides = Number(roller.querySelector("[data-dice-sides]").value);
+    if (!Number.isInteger(count) || count < 1 || count > 20 || ![4, 6, 8, 10, 12, 20, 100].includes(sides)) {
+      showPageNotice("Escolha entre 1 e 20 dados e um tipo de dado disponível.", true);
+      return;
+    }
+    const rolls = Array.from({ length: count }, () => rollDie(sides));
+    roller.querySelector("[data-dice-result]").textContent =
+      `d${sides}: ${rolls.join(", ")} · total: ${rolls.reduce((sum, roll) => sum + roll, 0)}`;
+    return;
+  }
+
+  if (action === "roll-attack") {
+    const natural = rollDie(20);
+    const bonus = Number(actionButton.dataset.bonus);
+    const total = natural + bonus;
+    const bonusText = bonus >= 0 ? `+ ${bonus}` : `− ${Math.abs(bonus)}`;
+    const criticalReached = natural >= Number(actionButton.dataset.critical);
+    actionButton.closest(".attack-card").querySelector("[data-attack-result]").textContent =
+      `d20 natural: ${natural} ${bonusText} = ${total}.${criticalReached ? " Faixa de crítico configurada atingida." : ""}`;
+    return;
+  }
+
+  if (action === "add-extra-damage") {
+    const form = actionButton.closest('form[data-system="ordem"]');
+    const list = form.querySelector("[data-extra-damage-list]");
+    if (list.children.length >= 10) {
+      showPageNotice("Um ataque pode ter no máximo 10 danos extras.", true);
+      return;
+    }
+    list.insertAdjacentHTML("beforeend", renderExtraDamageRow());
+    list.lastElementChild.querySelector("input").focus();
+    return;
+  }
+
+  if (action === "remove-extra-damage") {
+    actionButton.closest("[data-extra-damage-row]").remove();
+    return;
+  }
+
+  if (action === "select-gallery-image") {
+    const form = actionButton.closest('form[data-system="ordem"]');
+    setGalleryImage(form, actionButton.dataset.id);
+    return;
+  }
+
+  if (action === "upload-gallery-image") {
+    actionButton.disabled = true;
+    actionButton.textContent = "Enviando...";
+    try {
+      await uploadGalleryImage(actionButton.closest('form[data-system="ordem"]'));
+    } catch (error) {
+      showPageNotice(error.message, true);
+    } finally {
+      actionButton.disabled = false;
+      actionButton.textContent = "Enviar para a galeria";
+    }
+    return;
+  }
+
+  if (action === "format-attack-notes") {
+    document.execCommand(actionButton.dataset.command, false);
+    return;
+  }
+
+  if (action === "save-character-attack") {
+    const form = actionButton.closest('form[data-system="ordem"]');
+    try {
+      await saveCharacterAttack(form);
+    } catch (error) {
+      showPageNotice(error.message, true);
+    }
+    return;
+  }
+
+  if (action === "cancel-character-attack") {
+    resetCharacterAttackEditor(actionButton.closest('form[data-system="ordem"]'));
+    return;
+  }
+
+  if (action === "edit-character-attack") {
+    const form = actionButton.closest('form[data-system="ordem"]');
+    try {
+      const attack = characterAttacks(form).find((item) => item.id === actionButton.dataset.id);
+      if (!attack) throw new Error("Este ataque não está mais disponível para edição.");
+      editCharacterAttack(form, attack);
+    } catch (error) {
+      showPageNotice(error.message, true);
+    }
+    return;
+  }
+
+  if (action === "delete-character-attack") {
+    const form = actionButton.closest('form[data-system="ordem"]');
+    try {
+      const attacks = characterAttacks(form).filter((item) => item.id !== actionButton.dataset.id);
+      await persistCharacterAttacks(form, attacks);
+      if (form.querySelector(".attack-builder").dataset.editingAttack === actionButton.dataset.id) {
+        resetCharacterAttackEditor(form);
+      }
+      showPageNotice("Ataque removido da ficha.");
+    } catch (error) {
+      showPageNotice(error.message, true);
+    }
+    return;
+  }
+
+  if (action === "add-character-origin") {
+    const form = actionButton.closest('form[data-system="ordem"]');
+    const builder = actionButton.closest(".order-origin-builder");
+    const inputs = [...builder.querySelectorAll("input, select, textarea")];
+    const invalid = inputs.find((input) => !input.checkValidity());
+    if (invalid) {
+      invalid.reportValidity();
+      return;
+    }
+    const draftValue = (name) => builder.querySelector(`[name="${name}"]`).value;
+    const origin = {
+      name: draftValue("originDraftName").trim(),
+      source: draftValue("originDraftSource"),
+      description: draftValue("originDraftDescription").trim(),
+      skills: [
+        draftValue("originDraftSkill1"),
+        draftValue("originDraftSkill2")
+      ],
+      power: draftValue("originDraftPower").trim(),
+      powerNotes: draftValue("originDraftPowerNotes").trim()
+    };
+    if (origin.skills[0] === origin.skills[1]) {
+      showPageNotice("Escolha duas perícias diferentes para a origem.", true);
+      return;
+    }
+    const duplicate = [...form.querySelectorAll("[data-origin-card]")].some((card) =>
+      card.dataset.originName.toLocaleLowerCase("pt-BR") === origin.name.toLocaleLowerCase("pt-BR")
+        && card.dataset.originSource === origin.source
+    );
+    if (duplicate) {
+      showPageNotice("Já existe uma origem com esse nome e fonte na lista.", true);
+      return;
+    }
+    form.querySelector("[data-origin-list]").insertAdjacentHTML("beforeend", renderOrderOriginCard(origin));
+    for (const input of inputs) input.value = "";
+    builder.querySelector('[name="originDraftSource"]').value = "Livro básico";
+    builder.open = false;
+    filterOrderOriginCards(form);
+    showPageNotice("Origem adicionada. Selecione-a na lista para continuar.");
+    return;
+  }
+
+  if (action === "select-character-origin") {
+    const form = actionButton.closest('form[data-system="ordem"]');
+    selectOrderOrigin(form, actionButton.closest("[data-origin-card]"));
+    return;
+  }
+
+  if (action === "character-step") {
+    const form = actionButton.closest('form[data-system="ordem"]');
+    const targetStep = Number(actionButton.dataset.step);
+    const currentStep = Number(form.dataset.currentStep || 0);
+    if (targetStep > currentStep) {
+      for (let step = currentStep; step < targetStep; step += 1) {
+        if (!validateOrderStep(form, step)) return;
+      }
+    }
+    setOrderCharacterStep(form, targetStep);
+    updateOrderCharacterForm(form);
+    return;
+  }
+
   if (action === "retry") {
     await renderRoute();
+    return;
+  }
+
+  if (action === "toggle-agent-picker") {
+    const picker = document.getElementById(actionButton.getAttribute("aria-controls"));
+    if (!picker) return;
+    const expanded = actionButton.getAttribute("aria-expanded") === "true";
+    actionButton.setAttribute("aria-expanded", String(!expanded));
+    picker.hidden = expanded;
+    if (!expanded) picker.querySelector('button:not(:disabled)')?.focus();
+    return;
+  }
+
+  if (action === "link-character") {
+    const character = getCharacter(actionButton.dataset.id);
+    const campaign = getCampaign(actionButton.dataset.campaign);
+    if (!character || !campaign || !canAccessCampaign(campaign)
+      || character.owner !== currentUser().id || character.campaignId
+      || character.system !== campaign.system) {
+      showPageNotice("Esta ficha não pode ser vinculada à campanha.", true);
+      return;
+    }
+    try {
+      await apiRequest(`/characters/${character.id}/campaign`, {
+        method: "PATCH",
+        body: JSON.stringify({ campaignId: campaign.id })
+      });
+      await renderRoute();
+      showPageNotice(`${character.name} foi vinculado à campanha e está disponível em todas as sessões.`);
+    } catch (error) {
+      showPageNotice(error.message, true);
+    }
     return;
   }
 
@@ -903,16 +4625,123 @@ async function handlePageClick(event) {
     return;
   }
 
+  if (action === "delete-campaign") {
+    const campaign = getCampaign(actionButton.dataset.id);
+    if (!canManageCampaign(campaign)) {
+      showPageNotice("Somente o mestre pode excluir esta campanha.", true);
+      return;
+    }
+    const confirmed = window.confirm(
+      `Excluir a campanha "${campaign.name}"? As sessões, o histórico e os participantes serão removidos. As fichas serão mantidas, mas desvinculadas da campanha. Esta ação não pode ser desfeita.`
+    );
+    if (!confirmed) return;
+    try {
+      await apiRequest(`/campaigns/${campaign.id}`, { method: "DELETE" });
+      await renderRoute();
+    } catch (error) {
+      showPageNotice(error.message, true);
+    }
+    return;
+  }
+
+  if (action === "toggle-character-selection") {
+    const panel = actionButton.closest(".content-panel");
+    const characterList = panel.querySelector("[data-character-list]");
+    const selecting = !characterList.classList.contains("is-selecting");
+    characterList.classList.toggle("is-selecting", selecting);
+    panel.querySelector("[data-character-selection-tools]").hidden = !selecting;
+    actionButton.setAttribute("aria-pressed", String(selecting));
+    actionButton.setAttribute("aria-label", selecting ? "Cancelar seleção de agentes" : "Selecionar agentes para desvincular");
+    actionButton.title = selecting ? "Cancelar seleção" : "Selecionar agentes para desvincular";
+    if (!selecting) {
+      characterList.querySelectorAll("[data-character-select]").forEach((checkbox) => { checkbox.checked = false; });
+      panel.querySelector("[data-character-selection-count]").textContent = "0 selecionados";
+      panel.querySelector('[data-action="unlink-selected-characters"]').disabled = true;
+    }
+    return;
+  }
+
+  if (action === "unlink-selected-characters") {
+    const panel = actionButton.closest(".content-panel");
+    const characterIds = [...panel.querySelectorAll("[data-character-select]:checked")].map((checkbox) => checkbox.value);
+    const selectedCharacters = characterIds.map(getCharacter);
+    const campaign = getCampaign(actionButton.dataset.campaign);
+    if (!characterIds.length) {
+      showPageNotice("Selecione ao menos um agente para desvincular.", true);
+      return;
+    }
+    const isMaster = canManageCampaign(campaign);
+    if (!campaign || (!isMaster && !canAccessCampaign(campaign))
+      || selectedCharacters.some((character) => !character || character.campaignId !== campaign.id
+        || (!isMaster && character.owner !== currentUser().id))) {
+      showPageNotice(isMaster
+        ? "O mestre só pode desvincular agentes desta campanha."
+        : "Você só pode desvincular fichas próprias de campanhas das quais participa.", true);
+      return;
+    }
+    const confirmed = window.confirm(
+      `Desvincular ${characterIds.length} agente(s) da campanha "${campaign.name}"? As fichas continuarão no painel de seus proprietários como avulsas, e o histórico das sessões será preservado.`
+    );
+    if (!confirmed) return;
+    try {
+      await apiRequest(`/campaigns/${campaign.id}/characters`, {
+        method: "DELETE",
+        body: JSON.stringify({ characterIds })
+      });
+      await renderRoute();
+      showPageNotice(`${characterIds.length} agente(s) desvinculado(s). As fichas e o histórico foram preservados.`);
+    } catch (error) {
+      showPageNotice(error.message, true);
+    }
+    return;
+  }
+
+  if (action === "toggle-session-selection") {
+    const panel = actionButton.closest(".content-panel");
+    const sessionList = panel.querySelector("[data-session-list]");
+    const selecting = !sessionList.classList.contains("is-selecting");
+    sessionList.classList.toggle("is-selecting", selecting);
+    panel.querySelector("[data-session-selection-tools]").hidden = !selecting;
+    actionButton.setAttribute("aria-pressed", String(selecting));
+    actionButton.setAttribute("aria-label", selecting ? "Cancelar seleção de sessões" : "Selecionar sessões para excluir");
+    actionButton.title = selecting ? "Cancelar seleção" : "Selecionar sessões para excluir";
+    if (!selecting) {
+      sessionList.querySelectorAll("[data-session-select]").forEach((checkbox) => { checkbox.checked = false; });
+      panel.querySelector("[data-session-selection-count]").textContent = "0 selecionadas";
+      panel.querySelector('[data-action="delete-selected-sessions"]').disabled = true;
+    }
+    return;
+  }
+
+  if (action === "delete-selected-sessions") {
+    const panel = actionButton.closest(".content-panel");
+    const sessionIds = [...panel.querySelectorAll("[data-session-select]:checked")].map((checkbox) => checkbox.value);
+    const selectedSessions = sessionIds.map(getSession);
+    const campaign = selectedSessions[0] && getCampaign(selectedSessions[0].campaignId);
+    if (!sessionIds.length) {
+      showPageNotice("Selecione ao menos uma sessão para excluir.", true);
+      return;
+    }
+    if (!campaign || !canManageCampaign(campaign)
+      || selectedSessions.some((session) => !session || session.status !== "finished" || session.campaignId !== campaign.id)) {
+      showPageNotice("Somente o mestre pode excluir sessões finalizadas da mesma campanha.", true);
+      return;
+    }
+    const confirmed = window.confirm(
+      `Excluir ${sessionIds.length} sessão(ões) selecionada(s)? Os resumos e as linhas do tempo serão apagados permanentemente. Esta ação não pode ser desfeita.`
+    );
+    if (!confirmed) return;
+    try {
+      await apiRequest("/sessions", { method: "DELETE", body: JSON.stringify({ sessionIds }) });
+      await renderRoute();
+    } catch (error) {
+      showPageNotice(error.message, true);
+    }
+    return;
+  }
+
   if (action === "new-campaign") {
-    appPage.innerHTML = pageLayout(`${pageHeader("Campanhas privadas", "Criar campanha", "Campanhas ficam privadas e só participantes podem acessá-las.")}
-      <form class="content-panel form-panel" data-form="campaign">
-        <label><span>Nome da campanha *</span><input name="name" required maxlength="80"></label>
-        <label><span>Sistema *</span><select name="system" required><option value="">Selecione</option>
-          ${Object.entries(systems).map(([key, system]) => `<option value="${key}">${escapeHtml(system.name)}</option>`).join("")}</select></label>
-        <label><span>Descrição</span><textarea name="description" rows="4" maxlength="500"></textarea></label>
-        <p class="form-hint">Adicione o email de uma conta já cadastrada no sistema.</p>
-        <div class="form-actions"><button class="button button-primary" type="submit">Criar campanha privada</button></div>
-      </form>`);
+    location.hash = "nova-campanha";
   }
 
   if (action === "start-session") {
@@ -971,23 +4800,150 @@ siteNav.addEventListener("click", (event) => {
   }
 });
 loginTrigger.addEventListener("click", openAuthModal);
-authOpenButtons.forEach((button) => button.addEventListener("click", openAuthModal));
+authOpenButtons.forEach((button) => button.addEventListener("click", () => {
+  if (currentUser()) {
+    location.hash = "nova-campanha";
+    return;
+  }
+  openAuthModal();
+}));
 authCloseButton.addEventListener("click", closeAuthModal);
 authModal.addEventListener("click", (event) => {
   if (event.target === authModal) closeAuthModal();
 });
 authTabs.forEach((tab) => tab.addEventListener("click", () => setAuthView(tab.dataset.authView)));
+forgotPasswordTrigger.addEventListener("click", () => {
+  recoveryForm.elements.email.value = loginForm.elements.email.value.trim();
+  setAuthView("recovery");
+});
+recoveryForm.querySelector("[data-auth-view='login']").addEventListener("click", () => setAuthView("login"));
 loginForm.addEventListener("submit", handleLogin);
 signupForm.addEventListener("submit", handleSignup);
+recoveryForm.addEventListener("submit", handlePasswordRecovery);
+resetPasswordForm.addEventListener("submit", handlePasswordReset);
 appPage.addEventListener("submit", handlePageSubmit);
 appPage.addEventListener("click", handlePageClick);
+appPage.addEventListener("mousedown", (event) => {
+  if (event.target.closest('[data-action="format-attack-notes"]')) event.preventDefault();
+});
+appPage.addEventListener("paste", (event) => {
+  if (!event.target.closest("[data-attack-notes]")) return;
+  event.preventDefault();
+  const text = event.clipboardData?.getData("text/plain");
+  if (typeof text !== "string") {
+    showPageNotice("Não foi possível colar o conteúdo das anotações.", true);
+    return;
+  }
+  document.execCommand("insertText", false, text);
+});
+appPage.addEventListener("drop", (event) => {
+  if (!event.target.closest("[data-attack-notes]")) return;
+  event.preventDefault();
+  const text = event.dataTransfer?.getData("text/plain");
+  if (typeof text !== "string") {
+    showPageNotice("Não foi possível inserir o conteúdo nas anotações.", true);
+    return;
+  }
+  document.execCommand("insertText", false, text);
+});
+appPage.addEventListener("keydown", (event) => {
+  const activeTab = event.target.closest('[role="tab"]');
+  if (!activeTab || !["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+  const tabs = [...activeTab.closest('[role="tablist"]').querySelectorAll('[role="tab"]')];
+  const direction = event.key === "ArrowRight" ? 1 : -1;
+  const nextTab = tabs[(tabs.indexOf(activeTab) + direction + tabs.length) % tabs.length];
+  event.preventDefault();
+  nextTab.focus();
+  setCharacterTab(activeTab.closest("[data-character-tabs]"), nextTab.dataset.tab);
+});
+appPage.addEventListener("input", (event) => {
+  const form = event.target.closest('form[data-form="character"][data-system="ordem"]');
+  if (!form) return;
+  if (event.target.matches("[data-origin-search]")) {
+    filterOrderOriginCards(form);
+    return;
+  }
+  const resourceInput = event.target.closest("[data-order-current]");
+  if (resourceInput) resourceInput.dataset.userEdited = "true";
+  updateOrderCharacterForm(form);
+});
+appPage.addEventListener("change", (event) => {
+  if (event.target.matches("[data-inventory-type]")) {
+    updateInventorySpecificFields(event.target.form);
+    return;
+  }
+  if (event.target.matches("[data-ritual-circle-filter], [data-ritual-element-filter]")) {
+    filterOrderCharacterEntries();
+    return;
+  }
+  const characterCheckbox = event.target.closest("[data-character-select]");
+  if (characterCheckbox) {
+    const panel = characterCheckbox.closest(".content-panel");
+    const selectedCount = panel.querySelectorAll("[data-character-select]:checked").length;
+    panel.querySelector("[data-character-selection-count]").textContent = `${selectedCount} selecionado(s)`;
+    panel.querySelector('[data-action="unlink-selected-characters"]').disabled = selectedCount === 0;
+    return;
+  }
+  const sessionCheckbox = event.target.closest("[data-session-select]");
+  if (sessionCheckbox) {
+    const panel = sessionCheckbox.closest(".content-panel");
+    const selectedCount = panel.querySelectorAll("[data-session-select]:checked").length;
+    panel.querySelector("[data-session-selection-count]").textContent = `${selectedCount} selecionada(s)`;
+    panel.querySelector('[data-action="delete-selected-sessions"]').disabled = selectedCount === 0;
+    return;
+  }
+  const systemInput = event.target.closest('form[data-form="character"] input[name="system"][type="radio"]');
+  if (systemInput) {
+    const form = systemInput.closest('form[data-form="character"]');
+    const campaignId = form.elements.namedItem("campaignId").value;
+    const character = form.dataset.id ? getCharacter(form.dataset.id) : null;
+    const draft = {
+      system: systemInput.value,
+      name: form.elements.namedItem("name")?.value || "",
+      notes: form.elements.namedItem("notes")?.value || ""
+    };
+    appPage.innerHTML = renderCharacterForm(character?.id || "nova", campaignId, draft);
+    const orderForm = appPage.querySelector('form[data-form="character"][data-system="ordem"]');
+    if (orderForm) updateOrderCharacterForm(orderForm);
+    appPage.querySelector(`input[name="system"][value="${systemInput.value}"]`)?.focus();
+    return;
+  }
+  const form = event.target.closest('form[data-form="character"][data-system="ordem"]');
+  if (!form) return;
+  if (event.target.matches("[data-origin-choice]")) {
+    const selectedCard = event.target.closest(".order-origin-card");
+    if (selectedCard.classList.contains("is-selected")) {
+      const selectedSkills = [...selectedCard.querySelectorAll("[data-origin-choice]")].map((select) => select.value);
+      form.elements.namedItem("originSkill1").value = selectedSkills[0];
+      form.elements.namedItem("originSkill2").value = selectedSkills[1];
+    }
+    return;
+  }
+  updateOrderCharacterForm(form);
+});
 appPage.addEventListener("input", (event) => {
   if (event.target.matches("#public-search")) filterPublicTableCards();
+  if (event.target.matches("[data-ability-filter]")) filterOrderCharacterEntries();
+  const classicForm = event.target.closest("form[data-system-classic]");
+  if (classicForm) updateClassicCharacterForm(classicForm);
+  if (event.target.matches("[data-catalog-search]")) filterCatalog(event.target.dataset.catalogSearch);
 });
 appPage.addEventListener("change", (event) => {
   if (event.target.matches("#public-system-filter")) filterPublicTableCards();
+  if (event.target.matches("[data-catalog-track], [data-catalog-available]")) filterCatalog("ability");
+  if (event.target.matches("[data-catalog-circle], [data-catalog-element]")) filterCatalog("ritual");
+  if (event.target.matches("[data-catalog-type-select], [data-catalog-category-select]")) filterCatalog("inventory");
 });
 window.addEventListener("hashchange", renderRoute);
+supabaseClient?.auth.onAuthStateChange((event) => {
+  if (event === "PASSWORD_RECOVERY") {
+    resetPasswordForm.querySelectorAll("input, button[type='submit']").forEach((element) => {
+      element.disabled = false;
+    });
+    setAuthView("reset-password");
+    openAuthModal();
+  }
+});
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && !authModal.classList.contains("hidden")) closeAuthModal();
 });

@@ -4,11 +4,15 @@ const express = require("express");
 const database = require("./db");
 
 const app = express();
+const supabaseUrl = process.env.SUPABASE_URL || "";
+const supabasePublishableKey = process.env.SUPABASE_PUBLISHABLE_KEY || "";
+const supabaseOrigin = supabaseUrl ? new URL(supabaseUrl).origin : "";
 const sessionTtlDays = Math.min(Math.max(Number(process.env.SESSION_TTL_DAYS || 7), 1), 30);
 const cookieName = "mesa_session";
 const secureCookie = process.env.COOKIE_SECURE === "true" || process.env.NODE_ENV === "production";
 const loginAttempts = new Map();
 const allowedSystems = new Set(["dnd", "tormenta", "ordem"]);
+const maxCharactersPerUser = 15;
 const now = () => new Date().toISOString();
 const makeId = () => crypto.randomUUID();
 
@@ -19,7 +23,7 @@ app.use((request, response, next) => {
     "Referrer-Policy": "strict-origin-when-cross-origin",
     "X-Frame-Options": "DENY",
     "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
-    "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+    "Content-Security-Policy": `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: ${supabaseOrigin}; connect-src 'self' ${supabaseOrigin}; base-uri 'self'; form-action 'self'; frame-ancestors 'none'`
   });
   next();
 });
@@ -187,6 +191,19 @@ function requireCampaignMaster(campaignId, userId) {
   }
 }
 
+function requireCharacterCampaignSlot(campaignId, userId, characterId = null) {
+  const campaign = campaignMaster(campaignId);
+  if (!campaign || campaign.owner_id === userId) return;
+  const existingCharacter = characterId
+    ? database.prepare("SELECT 1 FROM characters WHERE campaign_id = ? AND owner_id = ? AND id <> ?")
+      .get(campaignId, userId, characterId)
+    : database.prepare("SELECT 1 FROM characters WHERE campaign_id = ? AND owner_id = ?")
+      .get(campaignId, userId);
+  if (existingCharacter) {
+    throw apiError(409, "campaign_character_limit", "Você pode ter apenas um agente próprio por campanha. Desvincule o atual para adicionar outro.");
+  }
+}
+
 function serializeCampaign(row, userId) {
   const participants = database.prepare(`
     SELECT users.id, users.display_name AS name, users.email, campaign_members.role
@@ -218,6 +235,85 @@ function parseFields(value) {
   } catch {
     return {};
   }
+}
+
+function sectionString(value, field, maximum, required = false) {
+  if (typeof value !== "string" || value.length > maximum || (required && !value.trim())) {
+    throw apiError(400, "validation_error", `Campo inválido: ${field}.`);
+  }
+  return value.trim();
+}
+
+function sectionInteger(value, field, minimum, maximum, nullable = false) {
+  if (nullable && (value === null || value === "" || value === undefined)) return null;
+  if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
+    throw apiError(400, "validation_error", `Campo inválido: ${field}.`);
+  }
+  return value;
+}
+
+function validateSectionEntries(value, section) {
+  if (!Array.isArray(value) || value.length > 100) {
+    throw apiError(400, "validation_error", "A lista deve conter no máximo 100 registros.");
+  }
+  const ids = new Set();
+  return value.map((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw apiError(400, "validation_error", "Um dos registros da ficha é inválido.");
+    }
+    const id = sectionString(entry.id, "id", 80, true);
+    if (ids.has(id)) throw apiError(400, "validation_error", "Há identificadores repetidos na lista.");
+    ids.add(id);
+    const name = sectionString(entry.name, "name", 100, true);
+    if (section === "abilities") {
+      return {
+        id,
+        name,
+        category: sectionString(entry.category || "Própria", "category", 60),
+        description: sectionString(entry.description || "", "description", 3000)
+      };
+    }
+    if (section === "rituals") {
+      if (!Number.isSafeInteger(entry.circle) || entry.circle < 1 || entry.circle > 4) {
+        throw apiError(400, "validation_error", "O círculo do ritual deve estar entre 1 e 4.");
+      }
+      return {
+        id,
+        name,
+        element: sectionString(entry.element || "", "element", 60),
+        circle: entry.circle,
+        execution: sectionString(entry.execution || "", "execution", 80),
+        range: sectionString(entry.range || "", "range", 80),
+        target: sectionString(entry.target || "", "target", 120),
+        duration: sectionString(entry.duration || "", "duration", 80),
+        resistance: sectionString(entry.resistance || "", "resistance", 120),
+        description: sectionString(entry.description || "", "description", 3000)
+      };
+    }
+    const allowedTypes = new Set(["arma", "municao", "protecao", "geral", "amaldiçoado", "amaldicoado"]);
+    const allowedCategories = new Set(["", "0", "I", "II", "III", "IV"]);
+    if (!allowedTypes.has(entry.type) || !allowedCategories.has(entry.category || "")) {
+      throw apiError(400, "validation_error", "Tipo ou categoria de item inválido.");
+    }
+    return {
+      id,
+      name,
+      type: entry.type,
+      category: entry.category || "",
+      quantity: sectionInteger(entry.quantity, "quantity", 1, 999),
+      spaces: sectionInteger(entry.spaces, "spaces", -99, 999),
+      capacityBonus: sectionInteger(entry.capacityBonus, "capacityBonus", 0, 999),
+      damage: sectionString(entry.damage || "", "damage", 80),
+      critical: sectionString(entry.critical || "", "critical", 40),
+      range: sectionString(entry.range || "", "range", 80),
+      damageType: sectionString(entry.damageType || "", "damageType", 80),
+      ammunition: sectionString(entry.ammunition || "", "ammunition", 80),
+      compatibleWeapon: sectionString(entry.compatibleWeapon || "", "compatibleWeapon", 80),
+      defense: sectionString(entry.defense || "", "defense", 40),
+      resistance: sectionString(entry.resistance || "", "resistance", 160),
+      description: sectionString(entry.description || "", "description", 2000)
+    };
+  });
 }
 
 function serializeCharacter(row) {
@@ -255,9 +351,16 @@ function serializeGameSession(row) {
     JOIN users ON users.id = session_events.author_id
     WHERE session_id = ? ORDER BY created_at, id
   `).all(row.id).map(serializeEvent);
+  const sessionNumber = database.prepare(`
+    SELECT COUNT(*) AS number FROM game_sessions
+    WHERE campaign_id = ? AND (
+      started_at < ? OR (started_at = ? AND id <= ?)
+    )
+  `).get(row.campaign_id, row.started_at, row.started_at, row.id).number;
   return {
     id: row.id,
     campaignId: row.campaign_id,
+    sessionNumber,
     status: row.status,
     startedAt: row.started_at,
     endedAt: row.ended_at,
@@ -406,6 +509,16 @@ app.use((request, response, next) => {
 
 app.get("/api/health", (request, response) => response.json({ status: "ok" }));
 app.get("/api/bootstrap", (request, response) => response.json(loadBootstrap(request.user)));
+app.get("/supabase-config.js", (request, response) => {
+  response.set({
+    "Cache-Control": "no-store",
+    "Content-Type": "text/javascript; charset=utf-8"
+  });
+  response.send(`window.MESA_SUPABASE_CONFIG = ${JSON.stringify({
+    url: supabaseUrl,
+    publishableKey: supabasePublishableKey
+  })};`);
+});
 
 app.post("/api/auth/register", asyncRoute((request, response) => {
   const name = bodyString(request.body, "name", 1, 80);
@@ -485,18 +598,28 @@ app.post("/api/characters", requireUser, asyncRoute((request, response) => {
   const fields = request.body.fields && typeof request.body.fields === "object" && !Array.isArray(request.body.fields) ? request.body.fields : {};
   if (notes.length > 5000 || JSON.stringify(fields).length > 10000) throw apiError(400, "validation_error", "Os campos da ficha excedem o limite permitido.");
   const campaignId = request.body.campaignId || null;
-  if (campaignId) {
-    requireCampaignMember(campaignId, request.user.id);
-    const campaign = database.prepare("SELECT system FROM campaigns WHERE id = ?").get(campaignId);
-    if (campaign.system !== system) throw apiError(400, "system_mismatch", "A ficha deve usar o sistema da campanha.");
-  }
   const id = makeId();
   const createdAt = now();
-  database.prepare(`
-    INSERT INTO characters (id, owner_id, campaign_id, name, system, fields_json, notes, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, request.user.id, campaignId, name, system, JSON.stringify(fields), notes, createdAt, createdAt);
-  response.status(201).json({ character: serializeCharacter(getCharacterOr404(id)) });
+  const createCharacter = database.transaction(() => {
+    const ownedCharacterCount = database.prepare("SELECT COUNT(*) AS count FROM characters WHERE owner_id = ?")
+      .get(request.user.id).count;
+    if (ownedCharacterCount >= maxCharactersPerUser) {
+      throw apiError(409, "character_limit_reached", "Você já possui 15 fichas. Exclua uma ficha para criar outra.");
+    }
+    if (campaignId) {
+      requireCampaignMember(campaignId, request.user.id);
+      const campaign = database.prepare("SELECT system FROM campaigns WHERE id = ?").get(campaignId);
+      if (campaign.system !== system) throw apiError(400, "system_mismatch", "A ficha deve usar o sistema da campanha.");
+      requireCharacterCampaignSlot(campaignId, request.user.id);
+    }
+    database.prepare(`
+      INSERT INTO characters (id, owner_id, campaign_id, name, system, fields_json, notes, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, request.user.id, campaignId, name, system, JSON.stringify(fields), notes, createdAt, createdAt);
+    return getCharacterOr404(id);
+  });
+  const character = createCharacter.immediate();
+  response.status(201).json({ character: serializeCharacter(character) });
 }));
 
 app.get("/api/characters/:id", requireUser, asyncRoute((request, response) => {
@@ -508,23 +631,248 @@ app.get("/api/characters/:id", requireUser, asyncRoute((request, response) => {
 }));
 
 app.patch("/api/characters/:id", requireUser, asyncRoute((request, response) => {
-  const character = getCharacterOr404(request.params.id);
-  if (character.owner_id !== request.user.id) throw apiError(403, "forbidden", "Você só pode editar fichas próprias.");
   const name = bodyString(request.body, "name", 1, 80);
   const system = bodySystem(request.body);
   const notes = typeof request.body.notes === "string" ? request.body.notes.trim() : "";
   const fields = request.body.fields && typeof request.body.fields === "object" && !Array.isArray(request.body.fields) ? request.body.fields : {};
   const campaignId = request.body.campaignId || null;
   if (notes.length > 5000 || JSON.stringify(fields).length > 10000) throw apiError(400, "validation_error", "Os campos da ficha excedem o limite permitido.");
-  if (campaignId) {
+  const character = database.transaction(() => {
+    const currentCharacter = getCharacterOr404(request.params.id);
+    if (currentCharacter.owner_id !== request.user.id) throw apiError(403, "forbidden", "Você só pode editar fichas próprias.");
+    if (campaignId) {
+      requireCampaignMember(campaignId, request.user.id);
+      const campaign = database.prepare("SELECT system FROM campaigns WHERE id = ?").get(campaignId);
+      if (campaign.system !== system) throw apiError(400, "system_mismatch", "A ficha deve usar o sistema da campanha.");
+      if (campaignId !== currentCharacter.campaign_id) {
+        requireCharacterCampaignSlot(campaignId, request.user.id, currentCharacter.id);
+      }
+    }
+    database.prepare(`
+      UPDATE characters SET campaign_id = ?, name = ?, system = ?, fields_json = ?, notes = ?, updated_at = ? WHERE id = ?
+    `).run(campaignId, name, system, JSON.stringify(fields), notes, now(), currentCharacter.id);
+    return getCharacterOr404(currentCharacter.id);
+  })();
+  response.json({ character: serializeCharacter(character) });
+}));
+
+app.delete("/api/characters/:id", requireUser, asyncRoute((request, response) => {
+  const deleteCharacter = database.transaction(() => {
+    const character = getCharacterOr404(request.params.id);
+    if (character.owner_id !== request.user.id) throw apiError(404, "not_found", "Ficha não encontrada.");
+    const hasSessionEvents = database.prepare("SELECT 1 FROM session_events WHERE character_id = ? LIMIT 1")
+      .get(character.id);
+    if (hasSessionEvents) {
+      throw apiError(409, "character_has_history", "Esta ficha possui registros de sessões e não pode ser excluída.");
+    }
+    database.prepare("DELETE FROM characters WHERE id = ? AND owner_id = ?").run(character.id, request.user.id);
+  });
+  deleteCharacter.immediate();
+  response.status(204).end();
+}));
+
+app.patch("/api/characters/:id/campaign", requireUser, asyncRoute((request, response) => {
+  const campaignId = bodyString(request.body, "campaignId", 1, 80);
+  const linkedCharacter = database.transaction(() => {
+    const character = getCharacterOr404(request.params.id);
+    if (character.owner_id !== request.user.id) throw apiError(403, "forbidden", "Você só pode vincular fichas próprias.");
+    if (character.campaign_id) throw apiError(409, "character_already_linked", "Esta ficha já está vinculada a uma campanha.");
+
     requireCampaignMember(campaignId, request.user.id);
     const campaign = database.prepare("SELECT system FROM campaigns WHERE id = ?").get(campaignId);
-    if (campaign.system !== system) throw apiError(400, "system_mismatch", "A ficha deve usar o sistema da campanha.");
+    if (campaign.system !== character.system) throw apiError(400, "system_mismatch", "A ficha deve usar o sistema da campanha.");
+    requireCharacterCampaignSlot(campaignId, request.user.id, character.id);
+
+    const result = database.prepare("UPDATE characters SET campaign_id = ?, updated_at = ? WHERE id = ? AND campaign_id IS NULL")
+      .run(campaignId, now(), character.id);
+    if (result.changes !== 1) throw apiError(409, "character_already_linked", "Esta ficha já está vinculada a uma campanha.");
+    return getCharacterOr404(character.id);
+  })();
+  response.json({ character: serializeCharacter(linkedCharacter) });
+}));
+
+app.patch("/api/characters/:id/resources", requireUser, asyncRoute((request, response) => {
+  const character = getCharacterOr404(request.params.id);
+  const campaign = character.campaign_id ? campaignMaster(character.campaign_id) : null;
+  const isOwner = character.owner_id === request.user.id;
+  const isMaster = campaign?.owner_id === request.user.id;
+  if (!isOwner && !isMaster) throw apiError(403, "forbidden", "Você não pode alterar os recursos desta ficha.");
+  if (character.system !== "ordem") throw apiError(400, "validation_error", "A edição de recursos está disponível para fichas de Ordem Paranormal.");
+  if (!isOwner) requireCampaignMember(character.campaign_id, request.user.id);
+
+  const requestedResources = [
+    { key: "PV atual", maximum: "PV máximo", label: "Pontos de vida", value: request.body.hp },
+    { key: "PE atual", maximum: "PE máximo", label: "Pontos de esforço", value: request.body.pe },
+    { key: "SAN atual", maximum: "SAN máxima", label: "Sanidade", value: request.body.san }
+  ];
+  if (requestedResources.some(({ value }) => !Number.isSafeInteger(value) || value < 0)) {
+    throw apiError(400, "validation_error", "Informe valores inteiros iguais ou maiores que zero.");
   }
-  database.prepare(`
-    UPDATE characters SET campaign_id = ?, name = ?, system = ?, fields_json = ?, notes = ?, updated_at = ? WHERE id = ?
-  `).run(campaignId, name, system, JSON.stringify(fields), notes, now(), character.id);
-  response.json({ character: serializeCharacter(getCharacterOr404(character.id)) });
+
+  const eventIds = [];
+  const updatedAt = now();
+  const saveResources = database.transaction(() => {
+    const currentCharacter = getCharacterOr404(character.id);
+    const fields = parseFields(currentCharacter.fields_json);
+    for (const resource of requestedResources) {
+      const maximum = Number(fields[resource.maximum]);
+      if (!Number.isSafeInteger(maximum) || maximum < 0 || resource.value > maximum) {
+        throw apiError(400, "validation_error", `O valor de ${resource.label} não pode ultrapassar o máximo da ficha.`);
+      }
+    }
+
+    const activeSession = currentCharacter.campaign_id && isCampaignMember(currentCharacter.campaign_id, request.user.id)
+      ? database.prepare("SELECT id FROM game_sessions WHERE campaign_id = ? AND status = 'active'").get(currentCharacter.campaign_id)
+      : null;
+    const nextFields = { ...fields };
+    for (const resource of requestedResources) {
+      const before = Object.hasOwn(fields, resource.key) ? String(fields[resource.key]) : "—";
+      const after = String(resource.value);
+      if (before === after) continue;
+
+      nextFields[resource.key] = after;
+      if (activeSession) {
+        const eventId = makeId();
+        database.prepare(`
+          INSERT INTO session_events (id, session_id, character_id, author_id, field_name, value_before, value_after, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(eventId, activeSession.id, currentCharacter.id, request.user.id, resource.label, before, after, updatedAt);
+        eventIds.push(eventId);
+      }
+    }
+    if (eventIds.length || requestedResources.some(({ key, value }) =>
+      String(fields[key] ?? "—") !== String(value)
+    )) {
+      database.prepare("UPDATE characters SET fields_json = ?, updated_at = ? WHERE id = ?")
+        .run(JSON.stringify(nextFields), updatedAt, currentCharacter.id);
+    }
+  });
+  saveResources();
+
+  const events = eventIds.map((eventId) => serializeEvent(database.prepare(`
+    SELECT session_events.*, characters.name AS character_name, users.email AS author_email
+    FROM session_events
+    JOIN characters ON characters.id = session_events.character_id
+    JOIN users ON users.id = session_events.author_id
+    WHERE session_events.id = ?
+  `).get(eventId)));
+  response.json({ character: serializeCharacter(getCharacterOr404(character.id)), events });
+}));
+
+app.patch("/api/characters/:id/section", requireUser, asyncRoute((request, response) => {
+  const { section, value } = request.body;
+  const eventIds = [];
+  const updatedAt = now();
+  const saveSection = database.transaction(() => {
+    const character = getCharacterOr404(request.params.id);
+    if (character.system !== "ordem") {
+      throw apiError(400, "validation_error", "Estas seções estão disponíveis apenas para fichas de Ordem Paranormal.");
+    }
+    const isOwner = character.owner_id === request.user.id;
+    const campaign = character.campaign_id ? campaignMaster(character.campaign_id) : null;
+    const isMaster = Boolean(campaign && campaign.owner_id === request.user.id
+      && isCampaignMember(character.campaign_id, request.user.id));
+    if (!isOwner && !isMaster) {
+      throw apiError(403, "forbidden", "Você não pode alterar esta ficha.");
+    }
+
+    const fields = parseFields(character.fields_json);
+    const nextFields = { ...fields };
+    let nextNotes = character.notes;
+    if (section === "abilities" || section === "rituals") {
+      const field = section === "abilities" ? "Habilidades" : "Rituais";
+      nextFields[field] = validateSectionEntries(value, section);
+    } else if (section === "description") {
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        throw apiError(400, "validation_error", "Descrição inválida.");
+      }
+      nextNotes = sectionString(value.notes, "notes", 5000);
+      for (const [input, field] of [
+        ["appearance", "Aparência"],
+        ["personality", "Personalidade"],
+        ["history", "Histórico"],
+        ["objective", "Objetivo"]
+      ]) {
+        nextFields[field] = sectionString(value[input] || "", input, 2000);
+      }
+    } else if (section === "inventory") {
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        throw apiError(400, "validation_error", "Inventário inválido.");
+      }
+      const previousInventory = fields["Inventário"] && typeof fields["Inventário"] === "object"
+        && !Array.isArray(fields["Inventário"]) ? fields["Inventário"] : {};
+      const limits = value.itemLimits && typeof value.itemLimits === "object" && !Array.isArray(value.itemLimits)
+        ? value.itemLimits : {};
+      const itemLimits = Object.fromEntries(["0", "I", "II", "III", "IV"].map((category) => [
+        category, sectionInteger(limits[category], `itemLimits.${category}`, 0, 999, true)
+      ]));
+      const nextItems = Object.hasOwn(value, "items")
+        ? validateSectionEntries(value.items, "inventory")
+        : Array.isArray(previousInventory.items) ? previousInventory.items : [];
+      const inventory = {
+        prestige: sectionInteger(value.prestige, "prestige", 0, 999999, true),
+        rank: sectionString(value.rank || "", "rank", 80),
+        creditLimit: sectionString(value.creditLimit || "", "creditLimit", 80),
+        capacity: sectionInteger(value.capacity, "capacity", 0, 9999),
+        itemLimits,
+        items: nextItems
+      };
+      nextFields["Inventário"] = inventory;
+
+      if (Object.hasOwn(value, "items") && character.campaign_id
+        && isCampaignMember(character.campaign_id, request.user.id)) {
+        const activeSession = database.prepare(
+          "SELECT id FROM game_sessions WHERE campaign_id = ? AND status = 'active'"
+        ).get(character.campaign_id);
+        if (activeSession) {
+          const previousItems = Array.isArray(previousInventory.items) ? previousInventory.items : [];
+          const previousById = new Map(previousItems.filter((item) => item && typeof item.id === "string")
+            .map((item) => [item.id, item]));
+          const nextById = new Map(nextItems.map((item) => [item.id, item]));
+          const summarize = (item) => `${item.name} (x${item.quantity}) · ${item.type}${item.category ? ` · cat. ${item.category}` : ""}`;
+          const logChange = (before, after) => {
+            const eventId = makeId();
+            database.prepare(`
+              INSERT INTO session_events (id, session_id, character_id, author_id, field_name, value_before, value_after, created_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(eventId, activeSession.id, character.id, request.user.id, "Inventário", before, after, updatedAt);
+            eventIds.push(eventId);
+          };
+          for (const item of nextItems) {
+            const previous = previousById.get(item.id);
+            if (!previous) {
+              logChange("—", `Adicionado: ${summarize(item)}`);
+            } else if (JSON.stringify(previous) !== JSON.stringify(item)) {
+              logChange(summarize(previous), `Alterado: ${summarize(item)}`);
+            }
+          }
+          for (const item of previousItems) {
+            if (item && typeof item.id === "string" && !nextById.has(item.id)) {
+              logChange(summarize(item), `Removido: ${summarize(item)}`);
+            }
+          }
+        }
+      }
+    } else {
+      throw apiError(400, "validation_error", "Seção da ficha inválida.");
+    }
+
+    if (JSON.stringify(nextFields).length > 300000) {
+      throw apiError(400, "validation_error", "Os campos da ficha excedem o limite permitido.");
+    }
+    database.prepare("UPDATE characters SET fields_json = ?, notes = ?, updated_at = ? WHERE id = ?")
+      .run(JSON.stringify(nextFields), nextNotes, updatedAt, character.id);
+    return character.id;
+  });
+  const characterId = saveSection();
+  const events = eventIds.map((eventId) => serializeEvent(database.prepare(`
+    SELECT session_events.*, characters.name AS character_name, users.email AS author_email
+    FROM session_events
+    JOIN characters ON characters.id = session_events.character_id
+    JOIN users ON users.id = session_events.author_id
+    WHERE session_events.id = ?
+  `).get(eventId)));
+  response.json({ character: serializeCharacter(getCharacterOr404(characterId)), events });
 }));
 
 app.post("/api/campaigns/:id/sessions", requireUser, asyncRoute((request, response) => {
@@ -577,10 +925,86 @@ app.post("/api/sessions/:id/finish", requireUser, asyncRoute((request, response)
   requireCampaignMaster(session.campaign_id, request.user.id);
   if (session.status !== "active") throw apiError(409, "session_finished", "Esta sessão já foi encerrada.");
   const masterSummary = typeof request.body.summary === "string" ? request.body.summary.trim() : "";
+  if (!masterSummary) throw apiError(400, "session_summary_required", "Escreva um resumo antes de finalizar a sessão.");
   if (masterSummary.length > 10000) throw apiError(400, "validation_error", "O resumo pode ter no máximo 10.000 caracteres.");
   database.prepare("UPDATE game_sessions SET status = 'finished', ended_at = ?, master_summary = ? WHERE id = ? AND status = 'active'")
     .run(now(), masterSummary, session.id);
   response.json({ session: serializeGameSession(database.prepare("SELECT * FROM game_sessions WHERE id = ?").get(session.id)) });
+}));
+
+app.delete("/api/sessions/:id", requireUser, asyncRoute((request, response) => {
+  const session = database.prepare("SELECT * FROM game_sessions WHERE id = ?").get(request.params.id);
+  if (!session) throw apiError(404, "not_found", "Sessão não encontrada.");
+  requireCampaignMaster(session.campaign_id, request.user.id);
+  if (session.status !== "finished") {
+    throw apiError(409, "session_not_finished", "Somente sessões finalizadas podem ser excluídas.");
+  }
+  database.prepare("DELETE FROM game_sessions WHERE id = ? AND status = 'finished'").run(session.id);
+  response.status(204).end();
+}));
+
+app.delete("/api/sessions", requireUser, asyncRoute((request, response) => {
+  const sessionIds = request.body && request.body.sessionIds;
+  if (!Array.isArray(sessionIds) || sessionIds.length < 1 || sessionIds.length > 50
+    || sessionIds.some((id) => typeof id !== "string" || !id.trim())
+    || new Set(sessionIds).size !== sessionIds.length) {
+    throw apiError(400, "validation_error", "Selecione de 1 a 50 sessões válidas, sem duplicatas.");
+  }
+
+  const deleteSessions = database.transaction((ids) => {
+    const placeholders = ids.map(() => "?").join(", ");
+    const sessions = database.prepare(`SELECT * FROM game_sessions WHERE id IN (${placeholders})`).all(...ids);
+    if (sessions.length !== ids.length) throw apiError(404, "not_found", "Uma ou mais sessões não foram encontradas.");
+    const campaignId = sessions[0].campaign_id;
+    if (sessions.some((session) => session.campaign_id !== campaignId)) {
+      throw apiError(400, "validation_error", "Selecione sessões da mesma campanha.");
+    }
+    requireCampaignMaster(campaignId, request.user.id);
+    if (sessions.some((session) => session.status !== "finished")) {
+      throw apiError(409, "session_not_finished", "Somente sessões finalizadas podem ser excluídas.");
+    }
+    database.prepare(`DELETE FROM game_sessions WHERE id IN (${placeholders}) AND status = 'finished'`).run(...ids);
+  });
+  deleteSessions(sessionIds);
+  response.status(204).end();
+}));
+
+app.delete("/api/campaigns/:id/characters", requireUser, asyncRoute((request, response) => {
+  const characterIds = request.body && request.body.characterIds;
+  if (!Array.isArray(characterIds) || characterIds.length < 1 || characterIds.length > 50
+    || characterIds.some((id) => typeof id !== "string" || !id.trim())
+    || new Set(characterIds).size !== characterIds.length) {
+    throw apiError(400, "validation_error", "Selecione de 1 a 50 agentes válidos, sem duplicatas.");
+  }
+
+  const unlinkCharacters = database.transaction((ids) => {
+    const campaign = campaignMaster(request.params.id);
+    if (!campaign) throw apiError(404, "not_found", "Campanha não encontrada.");
+    const isMaster = campaign.owner_id === request.user.id;
+    if (!isMaster) requireCampaignMember(request.params.id, request.user.id);
+
+    const placeholders = ids.map(() => "?").join(", ");
+    const characters = database.prepare(`SELECT id, campaign_id, owner_id FROM characters WHERE id IN (${placeholders})`).all(...ids);
+    if (characters.length !== ids.length) {
+      throw apiError(404, "not_found", "Um ou mais agentes não foram encontrados.");
+    }
+    if (characters.some((character) => character.campaign_id !== request.params.id)) {
+      throw apiError(400, "validation_error", "Selecione agentes vinculados à mesma campanha.");
+    }
+    if (!isMaster && characters.some((character) => character.owner_id !== request.user.id)) {
+      throw apiError(403, "forbidden", "Você só pode desvincular agentes próprios.");
+    }
+
+    const result = database.prepare(`
+      UPDATE characters SET campaign_id = NULL, updated_at = ?
+      WHERE id IN (${placeholders}) AND campaign_id = ?
+    `).run(now(), ...ids, request.params.id);
+    if (result.changes !== ids.length) {
+      throw apiError(409, "character_unavailable", "Um ou mais agentes não podem ser removidos da campanha.");
+    }
+  });
+  unlinkCharacters(characterIds);
+  response.status(204).end();
 }));
 
 app.post("/api/tables", requireUser, asyncRoute((request, response) => {
@@ -706,6 +1130,11 @@ app.use("/assets", express.static(path.join(__dirname, "..", "assets"), {
   etag: true,
   maxAge: process.env.NODE_ENV === "production" ? "1h" : 0
 }));
+app.get("/vendor/supabase.js", (request, response, next) => {
+  response.sendFile(path.join(__dirname, "..", "node_modules", "@supabase", "supabase-js", "dist", "umd", "supabase.js"), (error) => {
+    if (error) next(error);
+  });
+});
 
 app.use((request, response, next) => {
   if (request.path.startsWith("/api/")) return next(apiError(404, "not_found", "Rota da API não encontrada."));
