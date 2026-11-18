@@ -54,6 +54,18 @@ const systems = {
   tormenta: { name: "Tormenta20", resource: "PM", extra: "Raça" },
   ordem: { name: "Ordem Paranormal", resource: "PE", extra: "NEX" }
 };
+const maxCharactersPerUser = 15;
+const orderItemCategories = ["0", "I", "II", "III", "IV"];
+const getOrderAbilitiesCatalog = () => (typeof orderAbilitiesCatalog !== "undefined" ? orderAbilitiesCatalog : []);
+const getOrderRitualsCatalog = () => (typeof orderRitualsCatalog !== "undefined" ? orderRitualsCatalog : []);
+const getOrderInventoryCatalog = () => (typeof orderInventoryCatalog !== "undefined" ? orderInventoryCatalog : []);
+const orderItemTypes = [
+  ["arma", "Arma"],
+  ["municao", "Munição"],
+  ["protecao", "Proteção"],
+  ["geral", "Geral"],
+  ["amaldiçoado", "Item amaldiçoado"]
+];
 const orderAttributes = [
   { key: "FOR", name: "Força" },
   { key: "AGI", name: "Agilidade" },
@@ -310,8 +322,11 @@ function supabaseFailure(error, fallback) {
     character_not_in_campaign: "Um ou mais agentes já não estão vinculados a esta campanha.",
     character_not_owned: "Você só pode desvincular fichas próprias.",
     campaign_character_limit: "Você pode ter apenas um agente próprio por campanha. Desvincule o atual para adicionar outro.",
+    character_limit_reached: "Você já possui 15 fichas. Exclua uma ficha para criar outra.",
     invalid_character_resources: "Informe valores válidos, dentro dos limites máximos da ficha.",
     character_resources_not_supported: "A edição desses recursos está disponível apenas para fichas de Ordem Paranormal.",
+    invalid_character_section: "Confira os dados da seção e tente salvar novamente.",
+    character_section_not_supported: "Estas seções estão disponíveis apenas para fichas de Ordem Paranormal.",
     table_full: "Não há vagas disponíveis nesta mesa.",
     application_already_decided: "Esta inscrição já foi decidida."
   };
@@ -421,6 +436,16 @@ async function apiRequest(path, options = {}) {
     supabaseFailure(error, "Não foi possível salvar os recursos da ficha.");
     return null;
   }
+  const characterSectionMatch = path.match(/^\/characters\/([^/]+)\/section$/);
+  if (characterSectionMatch && method === "PATCH") {
+    const { error } = await client.rpc("update_character_section", {
+      target_character: characterSectionMatch[1],
+      section_name: body.section,
+      section_value: body.value
+    });
+    supabaseFailure(error, "Não foi possível salvar esta seção da ficha.");
+    return null;
+  }
   const characterCampaignMatch = path.match(/^\/characters\/([^/]+)\/campaign$/);
   if (characterCampaignMatch && method === "PATCH") {
     if (typeof body.campaignId !== "string" || !body.campaignId) {
@@ -454,6 +479,19 @@ async function apiRequest(path, options = {}) {
     return { character: linkedCharacter };
   }
   const characterMatch = path.match(/^\/characters(?:\/([^/]+))?$/);
+  if (characterMatch && characterMatch[1] && method === "DELETE") {
+    const { data: character, error } = await client.from("characters").delete()
+      .eq("id", characterMatch[1])
+      .eq("owner_id", user.id)
+      .select("id")
+      .maybeSingle();
+    if (error?.code === "23503") {
+      throw new Error("Esta ficha possui registros de sessões e não pode ser excluída.");
+    }
+    supabaseFailure(error, "Não foi possível excluir a ficha.");
+    if (!character) throw new Error("Ficha não encontrada ou você não tem permissão para excluí-la.");
+    return null;
+  }
   if (characterMatch && ["POST", "PATCH"].includes(method)) {
     const values = {
       owner_id: user.id,
@@ -1047,16 +1085,6 @@ function renderDashboard() {
   const sessions = data.sessions.filter((session) => campaigns.some((campaign) => campaign.id === session.campaignId));
   const activeSessions = sessions.filter((session) => session.status === "active");
   const tables = data.tables.filter((table) => table.owner === user.id);
-  const characterItems = characters.map((character) => {
-    const campaign = character.campaignId ? getCampaign(character.campaignId) : null;
-    const campaignLabel = campaign
-      ? campaign.name
-      : character.campaignId ? "Vinculada a uma campanha" : "Ficha avulsa";
-    return `<article class="list-card compact-card">
-      <div><h3>${escapeHtml(character.name)}</h3>
-        <p>${escapeHtml(getSystemName(character.system))} · ${escapeHtml(campaignLabel)}</p></div>
-      ${routeLink(`#ficha/${character.id}`, "Abrir ficha")}</article>`;
-  }).join("");
   const campaignItems = campaigns.map((campaign) => {
     const active = data.sessions.find((session) => session.campaignId === campaign.id && session.status === "active");
     return `<article class="list-card">
@@ -1092,14 +1120,41 @@ function renderDashboard() {
         ${routeLink("#mesas-publicas", "Encontrar mesa", "text-button")}</div>
           ${applicationRows ? `<ul class="application-list">${applicationRows}</ul>` : `<p class="empty-panel">Você ainda não solicitou vaga em uma mesa.</p>`}
         <div class="panel-heading panel-heading-spaced"><h2>Minhas fichas</h2>
-          ${routeLink("#ficha/nova", "Criar ficha", "text-button")}</div>
-        <div class="list-stack">${characterItems || `<p class="empty-panel">Nenhuma ficha criada ainda.</p>`}</div>
+          ${routeLink("#fichas", "Gerenciar fichas", "text-button")}</div>
+        <p class="empty-panel">${characters.length} de ${maxCharactersPerUser} fichas utilizadas. Crie e gerencie suas fichas na aba Fichas.</p>
       </section>
     </div>
     <section class="content-panel dashboard-tables"><div class="panel-heading"><h2>Mesas que mestro</h2>
       ${routeLink("#gestao-mesa/nova", "Publicar mesa", "text-button")}</div>
       <div class="list-stack">${tableItems || `<p class="empty-panel">Você ainda não publicou uma mesa.</p>`}</div>
     </section>`);
+}
+
+function renderCharacterList() {
+  const user = currentUser();
+  const characters = data.characters.filter((character) => character.owner === user.id);
+  const canCreate = characters.length < maxCharactersPerUser;
+  const items = characters.map((character) => {
+    const campaign = character.campaignId ? getCampaign(character.campaignId) : null;
+    const campaignLabel = campaign
+      ? campaign.name
+      : character.campaignId ? "Vinculada a uma campanha" : "Ficha avulsa";
+    return `<article class="list-card compact-card">
+      <div><h3>${escapeHtml(character.name)}</h3>
+        <p>${escapeHtml(getSystemName(character.system))} · ${escapeHtml(campaignLabel)}</p></div>
+      <div class="card-actions">
+        ${routeLink(`#ficha/${character.id}`, "Abrir ficha")}
+        ${routeLink(`#ficha/${character.id}/editar`, "Editar", "button button-outline")}
+        <button class="button button-outline" type="button" data-action="delete-character" data-id="${escapeHtml(character.id)}">Excluir</button>
+      </div>
+    </article>`;
+  }).join("");
+  return pageLayout(`${pageHeader("Suas fichas", "Fichas", `${characters.length} de ${maxCharactersPerUser} fichas utilizadas.`,
+    canCreate
+      ? routeLink("#ficha/nova", "Criar ficha", "button button-primary")
+      : "")}
+    ${!canCreate ? `<p class="empty-panel character-limit-notice">Você atingiu o limite de 15 fichas. Exclua uma ficha para criar outra.</p>` : ""}
+    <section class="list-stack">${items || `<p class="empty-panel">Você ainda não criou fichas.</p>`}</section>`);
 }
 
 function renderCampaignList() {
@@ -1205,7 +1260,6 @@ function renderCampaign(id, showFinishForm = false) {
         <div class="card-actions">
           <button class="button button-outline" type="button" data-action="toggle-agent-picker"
             aria-expanded="false" aria-controls="campaign-agent-picker">Adicionar agentes</button>
-          ${routeLink(`#ficha/nova?campanha=${campaign.id}`, "Criar ficha", "text-button")}
           ${canSelectCharactersToUnlink && characters.length ? `<div class="session-header-actions">
             <div class="session-selection-tools" data-character-selection-tools hidden>
               <span data-character-selection-count>0 selecionados</span>
@@ -1824,7 +1878,7 @@ function renderOrderCharacterForm(character, campaignId, draft = {}) {
 
   return pageLayout(`${pageHeader("Ordem Paranormal", character ? "Editar agente" : "Criar agente",
     "Monte a ficha em quatro etapas. Os cálculos usam os valores de classe e progressão informados na referência; confirme as regras da sua mesa.",
-    routeLink("#painel", "Cancelar"))}
+    routeLink("#fichas", "Cancelar"))}
     <form class="content-panel form-panel order-character-form" data-form="character" data-system="ordem" data-id="${character?.id || ""}"
       data-selected-origin="${selectedOrigin ? "true" : "false"}" novalidate>
       <input type="hidden" name="system" value="ordem">
@@ -1944,12 +1998,16 @@ function renderCharacterForm(id, campaignId) {
   if (character && character.owner !== user.id) {
     return pageLayout(`<section class="access-card"><h1>Ficha indisponível</h1><p>Você só pode editar fichas próprias.</p>${routeLink("#painel", "Voltar ao painel")}</section>`);
   }
+  if (!character && data.characters.filter((entry) => entry.owner === user.id).length >= maxCharactersPerUser) {
+    return pageLayout(`<section class="access-card"><h1>Limite de fichas atingido</h1>
+      <p>Você já possui 15 fichas. Exclua uma ficha antes de criar outra.</p>${routeLink("#fichas", "Gerenciar fichas")}</section>`);
+  }
   const linkedCampaign = campaignId ? getCampaign(campaignId) : null;
   const selectedSystem = character?.system || linkedCampaign?.system || "dnd";
   const fields = character?.fields || {};
   if (selectedSystem === "ordem") return renderOrderCharacterForm(character, campaignId);
   const sys = systems[selectedSystem];
-  return pageLayout(`${pageHeader("Ficha de personagem", character ? "Editar ficha" : "Criar ficha", "Os campos do sistema são exemplos de interface; confirme edição e regras antes de usar em jogo.", routeLink("#painel", "Cancelar"))}
+  return pageLayout(`${pageHeader("Ficha de personagem", character ? "Editar ficha" : "Criar ficha", "Os campos do sistema são exemplos de interface; confirme edição e regras antes de usar em jogo.", routeLink("#fichas", "Cancelar"))}
     <form class="content-panel form-panel" data-form="character" data-id="${character?.id || ""}">
       <div class="form-grid">
         <label><span>Nome do personagem *</span><input name="name" required value="${escapeHtml(character?.name || "")}"></label>
@@ -2012,12 +2070,6 @@ function renderOrderCharacterSheet(character, campaign, options = {}) {
   );
   const canEditResources = options.canEditResources && resourceLimitsAvailable;
   const activeSession = options.activeSession;
-  const storyFields = [
-    ["Aparência", "Aparência"],
-    ["Personalidade", "Personalidade"],
-    ["Histórico", "Histórico"],
-    ["Objetivo", "Objetivo"]
-  ].filter(([, name]) => fields[name]);
   const knownFields = new Set([
     ...orderAttributes.map(({ name }) => name),
     "Origem", "Fonte da origem", "Descrição da origem", "Perícia de origem 1", "Perícia de origem 2",
@@ -2026,12 +2078,15 @@ function renderOrderCharacterSheet(character, campaign, options = {}) {
     "PV máximo", "PV atual", "PE máximo", "PE atual", "SAN máxima", "SAN atual",
     "Defesa sem proteção", "DT de rituais", "Carga máxima", "Bloqueio", "Esquiva",
     "Jogador", "Aparência", "Personalidade", "Histórico", "Objetivo",
-    "Ataques",
+    "Ataques", "Habilidades", "Rituais", "Inventário",
     "Mundano perícias de classe", "Mundano PV inicial", "Mundano PV por NEX",
     "Mundano PE inicial", "Mundano PE por NEX", "Mundano SAN inicial", "Mundano SAN por NEX",
     ...Array.from({ length: 10 }, (_, index) => `Perícia de classe ${index + 1}`)
   ]);
   const otherFields = Object.entries(fields).filter(([name, fieldValue]) => !knownFields.has(name) && fieldValue !== "");
+  const inventory = getOrderInventory(character);
+  const carryingCapacity = inventory.capacity + inventory.items.reduce((total, item) =>
+    total + (Number(item.capacityBonus) || 0) * (Number(item.quantity) || 0), 0);
 
   return `<div class="order-sheet">
     <section class="content-panel order-sheet-overview" aria-label="Resumo do agente">
@@ -2078,7 +2133,7 @@ function renderOrderCharacterSheet(character, campaign, options = {}) {
             ${detail("Bloqueio", "Bloqueio")}
             ${detail("Esquiva", "Esquiva")}
             ${detail("DT de rituais", "DT de rituais")}
-            ${detail("Carga máxima", "Carga máxima")}
+            <div class="order-sheet-detail"><span>Carga máxima</span><strong>${carryingCapacity} espaços</strong></div>
           </div>
         </section>
       </div>
@@ -2088,17 +2143,6 @@ function renderOrderCharacterSheet(character, campaign, options = {}) {
         <p class="order-sheet-legend">Perícias treinadas recebem o bônus-base indicado. Penalidades de carga podem afetar algumas perícias.</p>
       </section>
       <div class="order-sheet-side">
-        ${fields["Poder da origem"] || fields["Efeito do poder de origem"] ? `<section class="content-panel order-sheet-panel">
-          <div class="panel-heading"><h2>Origem</h2></div>
-          ${fields["Descrição da origem"] ? `<p>${escapeHtml(value("Descrição da origem"))}</p>` : ""}
-          ${fields["Perícias da origem"] ? detail("Perícias treinadas", "Perícias da origem") : ""}
-          ${fields["Poder da origem"] ? `<h3 class="order-sheet-power-title">${escapeHtml(value("Poder da origem"))}</h3>` : ""}
-          ${fields["Efeito do poder de origem"] ? `<p>${escapeHtml(value("Efeito do poder de origem"))}</p>` : ""}
-        </section>` : ""}
-        ${storyFields.length ? `<section class="content-panel order-sheet-panel">
-          <div class="panel-heading"><h2>Descrição do agente</h2></div>
-          ${storyFields.map(([label, name]) => `<div class="order-sheet-story"><h3>${label}</h3><p>${escapeHtml(value(name))}</p></div>`).join("")}
-        </section>` : ""}
         ${otherFields.length ? `<section class="content-panel order-sheet-panel">
           <div class="panel-heading"><h2>Outros campos</h2></div>
           <div class="order-sheet-details">${otherFields.map(([name, fieldValue]) => `<div class="order-sheet-detail">
@@ -2107,22 +2151,464 @@ function renderOrderCharacterSheet(character, campaign, options = {}) {
         </section>` : ""}
       </div>
     </div>
-    ${character.notes ? `<section class="content-panel order-sheet-panel"><div class="panel-heading"><h2>Anotações</h2></div>
-      <p class="order-sheet-notes">${escapeHtml(character.notes)}</p></section>` : ""}
   </div>`;
 }
 
-function renderCharacterTabs(sheetContent, combatContent) {
+function renderOrderAbilityTab(character, canEdit) {
+  const fields = character.fields || {};
+  const abilities = Array.isArray(fields.Habilidades)
+    ? fields.Habilidades.filter((ability) => ability && typeof ability === "object" && !Array.isArray(ability))
+    : [];
+  const originAbility = fields["Poder da origem"] ? {
+    name: fields["Poder da origem"],
+    category: "Origem",
+    description: fields["Efeito do poder de origem"] || "",
+    source: fields.Origem || "Origem escolhida"
+  } : null;
+  const cards = [
+    ...(originAbility ? [`<article class="character-entry-card" data-ability-card data-search="${escapeHtml(`${originAbility.name} ${originAbility.description}`.toLocaleLowerCase("pt-BR"))}">
+      <div class="character-entry-heading"><div><p class="eyebrow">Adicionada pela origem · ${escapeHtml(originAbility.source)}</p>
+        <h3>${escapeHtml(originAbility.name)}</h3></div><span class="status-chip">Automática</span></div>
+      ${originAbility.description ? `<p>${escapeHtml(originAbility.description)}</p>` : ""}
+    </article>`] : []),
+    ...abilities.map((ability) => `<article class="character-entry-card" data-ability-card data-search="${escapeHtml(`${ability.name} ${ability.category} ${ability.description}`.toLocaleLowerCase("pt-BR"))}">
+      <div class="character-entry-heading"><div><p class="eyebrow">${escapeHtml(ability.category || "Própria")}</p>
+        <h3>${escapeHtml(ability.name)}</h3></div>
+        ${canEdit ? `<div class="card-actions">
+          <button class="button button-outline" type="button" data-action="edit-character-entry" data-entry-type="ability" data-id="${escapeHtml(ability.id)}">Editar</button>
+          <button class="button button-outline" type="button" data-action="remove-character-entry" data-entry-type="ability" data-id="${escapeHtml(ability.id)}">Excluir</button>
+        </div>` : ""}
+      </div>
+      ${ability.description ? `<p>${escapeHtml(ability.description)}</p>` : ""}
+    </article>`)
+  ].join("");
+
+  const knownAbilityNames = new Set([
+    ...(originAbility ? [originAbility.name] : []),
+    ...abilities.map((ab) => ab.name)
+  ]);
+  const catalogAbilityCards = getOrderAbilitiesCatalog().map((item) => {
+    const isAdded = knownAbilityNames.has(item.name);
+    return `<article class="catalog-card" data-catalog-card="ability"
+      data-search="${escapeHtml(`${item.name} ${item.category} ${item.subcategory || ""} ${item.description}`.toLocaleLowerCase("pt-BR"))}"
+      data-group="${escapeHtml(item.category)}">
+      <div class="character-entry-heading">
+        <div>
+          <p class="eyebrow">${escapeHtml(item.category)}${item.subcategory ? ` · ${escapeHtml(item.subcategory)}` : ""}</p>
+          <h4>${escapeHtml(item.name)}</h4>
+        </div>
+        ${isAdded ? `<span class="status-chip">Na ficha</span>` : `
+          <button class="button button-small button-primary" type="button" data-action="add-catalog-item"
+            data-catalog-type="ability" data-catalog-id="${escapeHtml(item.id)}">+ Adicionar</button>
+        `}
+      </div>
+      <p>${escapeHtml(item.description)}</p>
+    </article>`;
+  }).join("");
+
+  return `<section class="character-entry-section">
+    <div class="panel-heading"><div><h2>Habilidades</h2>
+      <p class="form-hint">A habilidade da origem escolhida aparece automaticamente. Adicione aqui habilidades oficiais do compêndio ou criações próprias.</p></div>
+      ${canEdit ? `<div class="card-actions">
+        <button class="button button-primary" type="button" data-action="toggle-catalog" data-catalog-type="ability">Compêndio de habilidades</button>
+        <button class="button button-outline" type="button" data-action="new-character-entry" data-entry-type="ability">Nova habilidade própria</button>
+      </div>` : ""}
+    </div>
+    ${canEdit ? `<div class="content-panel catalog-panel" data-catalog-panel="ability" hidden>
+      <div class="catalog-header">
+        <div>
+          <h3>Compêndio de Habilidades</h3>
+          <p class="form-hint">Escolha poderes de combatente, especialista, ocultista, trilhas, origens ou poderes paranormais para adicionar à ficha.</p>
+        </div>
+        <button class="button button-small button-outline" type="button" data-action="close-catalog" data-catalog-type="ability">Fechar compêndio</button>
+      </div>
+      <div class="character-filters">
+        <label class="character-filter"><span>Buscar no compêndio</span>
+          <input type="search" data-catalog-search="ability" placeholder="Buscar por nome, classe, trilha ou efeito"></label>
+        <label><span>Filtrar por grupo</span>
+          <select data-catalog-group="ability">
+            <option value="">Todos os grupos</option>
+            <option value="Combatente">Combatente</option>
+            <option value="Especialista">Especialista</option>
+            <option value="Ocultista">Ocultista</option>
+            <option value="Classe">Poderes de Classe (Geral)</option>
+            <option value="Trilha">Poderes de Trilha</option>
+            <option value="Origem">Habilidades de Origens</option>
+            <option value="Poder paranormal">Poderes Paranormais</option>
+          </select>
+        </label>
+      </div>
+      <div class="catalog-grid" data-catalog-list="ability">
+        ${catalogAbilityCards}
+      </div>
+    </div>` : ""}
+    ${canEdit ? `<label class="character-filter"><span>Filtrar habilidades da ficha</span>
+      <input type="search" data-ability-filter placeholder="Buscar nas habilidades salvas na ficha"></label>` : ""}
+    <div class="character-entry-list" data-ability-list>${cards || `<p class="empty-panel">Nenhuma habilidade cadastrada além das concedidas pela origem.</p>`}</div>
+    ${canEdit ? `<form class="content-panel character-editor" data-form="character-entry" data-entry-type="ability" data-id="" hidden>
+      <h3 data-entry-form-title>Nova habilidade própria</h3>
+      <label><span>Nome *</span><input name="name" required maxlength="100"></label>
+      <label><span>Categoria</span><select name="category">
+        <option>Própria</option><option>Classe</option><option>Trilha</option><option>Origem</option><option>Poder paranormal</option>
+      </select></label>
+      <label><span>Descrição</span><textarea name="description" rows="4" maxlength="3000"></textarea></label>
+      <div class="form-actions"><button class="button button-primary" type="submit">Salvar habilidade</button>
+        <button class="button button-outline" type="button" data-action="cancel-character-entry" data-entry-type="ability">Cancelar</button></div>
+    </form>` : ""}
+  </section>`;
+}
+
+function renderOrderRitualTab(character, canEdit) {
+  const rituals = Array.isArray(character.fields?.Rituais)
+    ? character.fields.Rituais.filter((ritual) => ritual && typeof ritual === "object" && !Array.isArray(ritual))
+    : [];
+  const elements = [...new Set(rituals.map((ritual) => ritual.element).filter(Boolean))];
+  const cards = rituals.map((ritual) => `<article class="character-entry-card" data-ritual-card
+    data-circle="${escapeHtml(ritual.circle)}" data-element="${escapeHtml(ritual.element)}">
+    <div class="character-entry-heading"><div><p class="eyebrow">${escapeHtml(ritual.element)} · ${escapeHtml(ritual.circle)}º círculo</p>
+      <h3>${escapeHtml(ritual.name)}</h3></div>
+      ${canEdit ? `<div class="card-actions">
+        <button class="button button-outline" type="button" data-action="edit-character-entry" data-entry-type="ritual" data-id="${escapeHtml(ritual.id)}">Editar</button>
+        <button class="button button-outline" type="button" data-action="remove-character-entry" data-entry-type="ritual" data-id="${escapeHtml(ritual.id)}">Excluir</button>
+      </div>` : ""}
+    </div>
+    <dl class="character-entry-facts">
+      ${ritual.execution ? `<div><dt>Execução</dt><dd>${escapeHtml(ritual.execution)}</dd></div>` : ""}
+      ${ritual.range ? `<div><dt>Alcance</dt><dd>${escapeHtml(ritual.range)}</dd></div>` : ""}
+      ${ritual.target ? `<div><dt>Alvo/área</dt><dd>${escapeHtml(ritual.target)}</dd></div>` : ""}
+      ${ritual.duration ? `<div><dt>Duração</dt><dd>${escapeHtml(ritual.duration)}</dd></div>` : ""}
+      ${ritual.resistance ? `<div><dt>Resistência</dt><dd>${escapeHtml(ritual.resistance)}</dd></div>` : ""}
+    </dl>
+    ${ritual.description ? `<p>${escapeHtml(ritual.description)}</p>` : ""}
+  </article>`).join("");
+
+  const knownRitualNames = new Set(rituals.map((r) => r.name));
+  const catalogRitualCards = getOrderRitualsCatalog().map((item) => {
+    const isAdded = knownRitualNames.has(item.name);
+    return `<article class="catalog-card" data-catalog-card="ritual"
+      data-search="${escapeHtml(`${item.name} ${item.element} ${item.circle} ${item.description}`.toLocaleLowerCase("pt-BR"))}"
+      data-circle="${escapeHtml(item.circle)}" data-element="${escapeHtml(item.element)}">
+      <div class="character-entry-heading">
+        <div>
+          <p class="eyebrow">${escapeHtml(item.element)} · ${escapeHtml(item.circle)}º círculo</p>
+          <h4>${escapeHtml(item.name)}</h4>
+        </div>
+        ${isAdded ? `<span class="status-chip">Aprendido</span>` : `
+          <button class="button button-small button-primary" type="button" data-action="add-catalog-item"
+            data-catalog-type="ritual" data-catalog-id="${escapeHtml(item.id)}">+ Aprender</button>
+        `}
+      </div>
+      <dl class="character-entry-facts">
+        ${item.execution ? `<div><dt>Execução</dt><dd>${escapeHtml(item.execution)}</dd></div>` : ""}
+        ${item.range ? `<div><dt>Alcance</dt><dd>${escapeHtml(item.range)}</dd></div>` : ""}
+        ${item.target ? `<div><dt>Alvo/área</dt><dd>${escapeHtml(item.target)}</dd></div>` : ""}
+        ${item.duration ? `<div><dt>Duração</dt><dd>${escapeHtml(item.duration)}</dd></div>` : ""}
+        ${item.resistance ? `<div><dt>Resistência</dt><dd>${escapeHtml(item.resistance)}</dd></div>` : ""}
+      </dl>
+      <p>${escapeHtml(item.description)}</p>
+    </article>`;
+  }).join("");
+
+  return `<section class="character-entry-section">
+    <div class="panel-heading"><div><h2>Rituais</h2><p class="form-hint">Aprenda rituais do grimório oficial ou crie rituais próprios para o agente.</p></div>
+      ${canEdit ? `<div class="card-actions">
+        <button class="button button-primary" type="button" data-action="toggle-catalog" data-catalog-type="ritual">Grimório de rituais</button>
+        <button class="button button-outline" type="button" data-action="new-character-entry" data-entry-type="ritual">Novo ritual próprio</button>
+      </div>` : ""}
+    </div>
+    ${canEdit ? `<div class="content-panel catalog-panel" data-catalog-panel="ritual" hidden>
+      <div class="catalog-header">
+        <div>
+          <h3>Grimório de Rituais</h3>
+          <p class="form-hint">Selecione rituais de 1º a 4º círculo de Conhecimento, Energia, Medo, Morte, Sangue e Varia para aprender.</p>
+        </div>
+        <button class="button button-small button-outline" type="button" data-action="close-catalog" data-catalog-type="ritual">Fechar grimório</button>
+      </div>
+      <div class="character-filters">
+        <label class="character-filter"><span>Buscar no grimório</span>
+          <input type="search" data-catalog-search="ritual" placeholder="Buscar por nome, elemento ou efeito"></label>
+        <label><span>Filtrar por círculo</span>
+          <select data-catalog-circle="ritual">
+            <option value="">Todos os círculos</option>
+            <option value="1">1º círculo</option>
+            <option value="2">2º círculo</option>
+            <option value="3">3º círculo</option>
+            <option value="4">4º círculo</option>
+          </select>
+        </label>
+        <label><span>Filtrar por elemento</span>
+          <select data-catalog-element="ritual">
+            <option value="">Todos os elementos</option>
+            <option value="Conhecimento">Conhecimento</option>
+            <option value="Energia">Energia</option>
+            <option value="Medo">Medo</option>
+            <option value="Morte">Morte</option>
+            <option value="Sangue">Sangue</option>
+            <option value="Varia">Varia</option>
+          </select>
+        </label>
+      </div>
+      <div class="catalog-grid" data-catalog-list="ritual">
+        ${catalogRitualCards}
+      </div>
+    </div>` : ""}
+    ${canEdit ? `<div class="character-filters">
+      <label><span>Filtrar rituais da ficha (círculo)</span><select data-ritual-circle-filter>
+        <option value="">Todos</option>${[1, 2, 3, 4].map((circle) => `<option value="${circle}">${circle}º círculo</option>`).join("")}
+      </select></label>
+      <label><span>Filtrar rituais da ficha (elemento)</span><select data-ritual-element-filter>
+        <option value="">Todos</option>${elements.map((element) => `<option value="${escapeHtml(element)}">${escapeHtml(element)}</option>`).join("")}
+      </select></label>
+    </div>` : ""}
+    <div class="character-entry-list" data-ritual-list>${cards || `<p class="empty-panel">Você ainda não cadastrou rituais.</p>`}</div>
+    ${canEdit ? `<form class="content-panel character-editor" data-form="character-entry" data-entry-type="ritual" data-id="" hidden>
+      <h3 data-entry-form-title>Novo ritual próprio</h3>
+      <label><span>Nome *</span><input name="name" required maxlength="100"></label>
+      <div class="form-grid">
+        <label><span>Elemento</span><input name="element" maxlength="60" placeholder="Opcional"></label>
+        <label><span>Círculo</span><select name="circle">${[1, 2, 3, 4].map((circle) => `<option value="${circle}">${circle}º</option>`).join("")}</select></label>
+        <label><span>Execução</span><input name="execution" maxlength="80"></label>
+        <label><span>Alcance</span><input name="range" maxlength="80"></label>
+        <label><span>Alvo ou área</span><input name="target" maxlength="120"></label>
+        <label><span>Duração</span><input name="duration" maxlength="80"></label>
+        <label><span>Resistência</span><input name="resistance" maxlength="120"></label>
+      </div>
+      <label><span>Descrição</span><textarea name="description" rows="5" maxlength="3000"></textarea></label>
+      <div class="form-actions"><button class="button button-primary" type="submit">Salvar ritual</button>
+        <button class="button button-outline" type="button" data-action="cancel-character-entry" data-entry-type="ritual">Cancelar</button></div>
+    </form>` : ""}
+  </section>`;
+}
+
+function getOrderInventory(character) {
+  const stored = character.fields?.["Inventário"] && typeof character.fields["Inventário"] === "object"
+    ? character.fields["Inventário"]
+    : {};
+  const parsedCapacity = Number.parseInt(String(character.fields?.["Carga máxima"] || ""), 10);
+  const capacity = Number.isSafeInteger(Number(stored.capacity)) && Number(stored.capacity) >= 0
+    ? Number(stored.capacity)
+    : Number.isSafeInteger(parsedCapacity) && parsedCapacity >= 0 ? parsedCapacity : 0;
+  const limits = stored.itemLimits && typeof stored.itemLimits === "object" ? stored.itemLimits : {};
+  return {
+    prestige: stored.prestige ?? "",
+    rank: stored.rank || "",
+    creditLimit: stored.creditLimit || "",
+    capacity,
+    itemLimits: Object.fromEntries(orderItemCategories.map((category) => [
+      category,
+      limits[category] ?? ""
+    ])),
+    items: Array.isArray(stored.items)
+      ? stored.items.filter((item) => item && typeof item === "object" && !Array.isArray(item))
+      : []
+  };
+}
+
+function renderOrderInventoryTab(character, canEdit) {
+  const inventory = getOrderInventory(character);
+  const itemCount = inventory.items.reduce((total, item) => total + Math.max(0, Number(item.quantity) || 0), 0);
+  const usedSpaces = inventory.items.reduce((total, item) =>
+    total + (Number(item.spaces) || 0) * (Number(item.quantity) || 0), 0);
+  const itemCapacityBonus = inventory.items.reduce((total, item) =>
+    total + (Number(item.capacityBonus) || 0) * (Number(item.quantity) || 0), 0);
+  const maximumCapacity = inventory.capacity + itemCapacityBonus;
+  const categoryCounts = Object.fromEntries(orderItemCategories.map((category) => [category,
+    inventory.items.reduce((total, item) => total + (item.category === category ? Number(item.quantity) || 0 : 0), 0)
+  ]));
+  const labelForType = Object.fromEntries(orderItemTypes);
+  const items = inventory.items.map((item) => `<article class="character-entry-card inventory-item-card">
+    <div class="character-entry-heading"><div><p class="eyebrow">${escapeHtml(labelForType[item.type] || "Item")} ·
+      ${escapeHtml(item.category || "Sem categoria")}${item.quantity > 1 ? ` · quantidade ${escapeHtml(item.quantity)}` : ""}</p>
+      <h3>${escapeHtml(item.name)}</h3></div>
+      ${canEdit ? `<div class="card-actions">
+        <button class="button button-outline" type="button" data-action="edit-character-entry" data-entry-type="inventory" data-id="${escapeHtml(item.id)}">Editar</button>
+        <button class="button button-outline" type="button" data-action="remove-character-entry" data-entry-type="inventory" data-id="${escapeHtml(item.id)}">Remover</button>
+      </div>` : ""}
+    </div>
+    <div class="character-entry-facts">
+      ${item.spaces !== undefined ? `<div><dt>Espaços</dt><dd>${escapeHtml(item.spaces)} por unidade</dd></div>` : ""}
+      ${Number(item.capacityBonus) ? `<div><dt>Bônus de carga</dt><dd>+${escapeHtml(item.capacityBonus)} espaços</dd></div>` : ""}
+      ${item.damage ? `<div><dt>Dano</dt><dd>${escapeHtml(item.damage)}${item.critical ? ` · crítico ${escapeHtml(item.critical)}` : ""}</dd></div>` : ""}
+      ${item.range ? `<div><dt>Alcance</dt><dd>${escapeHtml(item.range)}</dd></div>` : ""}
+      ${item.compatibleWeapon ? `<div><dt>Compatível com</dt><dd>${escapeHtml(item.compatibleWeapon)}</dd></div>` : ""}
+      ${item.defense ? `<div><dt>Defesa</dt><dd>${escapeHtml(item.defense)}</dd></div>` : ""}
+      ${item.resistance ? `<div><dt>Resistência</dt><dd>${escapeHtml(item.resistance)}</dd></div>` : ""}
+    </div>
+    ${item.description ? `<p>${escapeHtml(item.description)}</p>` : ""}
+  </article>`).join("");
+  const itemLimits = orderItemCategories.map((category) => `<label><span>Categoria ${category} · limite</span>
+    <input name="limit${category}" type="number" min="0" max="999" step="1" value="${escapeHtml(inventory.itemLimits[category])}"></label>`).join("");
+  const quickCreateButtons = orderItemTypes.map(([type, label]) => `<button class="button button-outline" type="button"
+    data-action="new-character-entry" data-entry-type="inventory" data-item-type="${type}">Novo ${label.toLocaleLowerCase("pt-BR")}</button>`).join("");
+
+  const catalogItemCards = getOrderInventoryCatalog().map((item) => {
+    return `<article class="catalog-card" data-catalog-card="inventory"
+      data-search="${escapeHtml(`${item.name} ${item.type} ${item.category} ${item.description}`.toLocaleLowerCase("pt-BR"))}"
+      data-item-type="${escapeHtml(item.type)}" data-item-category="${escapeHtml(item.category || "0")}">
+      <div class="character-entry-heading">
+        <div>
+          <p class="eyebrow">${escapeHtml(labelForType[item.type] || item.type)} · Categoria ${escapeHtml(item.category || "0")}</p>
+          <h4>${escapeHtml(item.name)}</h4>
+        </div>
+        <button class="button button-small button-primary" type="button" data-action="add-catalog-item"
+          data-catalog-type="inventory" data-catalog-id="${escapeHtml(item.id)}">+ Adicionar</button>
+      </div>
+      <dl class="character-entry-facts">
+        ${item.spaces !== undefined ? `<div><dt>Espaços</dt><dd>${escapeHtml(item.spaces)}</dd></div>` : ""}
+        ${Number(item.capacityBonus) ? `<div><dt>Bônus de carga</dt><dd>+${escapeHtml(item.capacityBonus)}</dd></div>` : ""}
+        ${item.damage ? `<div><dt>Dano</dt><dd>${escapeHtml(item.damage)}${item.critical ? ` (${escapeHtml(item.critical)})` : ""}</dd></div>` : ""}
+        ${item.range ? `<div><dt>Alcance</dt><dd>${escapeHtml(item.range)}</dd></div>` : ""}
+        ${item.ammunition ? `<div><dt>Munição</dt><dd>${escapeHtml(item.ammunition)}</dd></div>` : ""}
+        ${item.compatibleWeapon ? `<div><dt>Compatível com</dt><dd>${escapeHtml(item.compatibleWeapon)}</dd></div>` : ""}
+        ${item.defense ? `<div><dt>Defesa</dt><dd>${escapeHtml(item.defense)}</dd></div>` : ""}
+        ${item.resistance ? `<div><dt>Resistência</dt><dd>${escapeHtml(item.resistance)}</dd></div>` : ""}
+      </dl>
+      ${item.description ? `<p>${escapeHtml(item.description)}</p>` : ""}
+    </article>`;
+  }).join("");
+
+  return `<section class="character-entry-section">
+    <div class="panel-heading"><div><h2>Inventário</h2>
+      <p class="form-hint">${itemCount} item(ns) · ${usedSpaces} de ${maximumCapacity} espaços ocupados</p></div>
+      ${canEdit ? `<div class="card-actions">
+        <button class="button button-primary" type="button" data-action="toggle-catalog" data-catalog-type="inventory">Arsenal de itens</button>
+        ${quickCreateButtons}
+      </div>` : ""}
+    </div>
+    ${usedSpaces > maximumCapacity ? `<p class="empty-panel character-limit-notice">O inventário excede a carga máxima configurada.</p>` : ""}
+    ${canEdit ? `<div class="content-panel catalog-panel" data-catalog-panel="inventory" hidden>
+      <div class="catalog-header">
+        <div>
+          <h3>Arsenal e Equipamentos</h3>
+          <p class="form-hint">Selecione armas, munições, proteções, itens operacionais e itens amaldiçoados de Ordem Paranormal para adicionar ao inventário.</p>
+        </div>
+        <button class="button button-small button-outline" type="button" data-action="close-catalog" data-catalog-type="inventory">Fechar arsenal</button>
+      </div>
+      <div class="character-filters">
+        <label class="character-filter"><span>Buscar no arsenal</span>
+          <input type="search" data-catalog-search="inventory" placeholder="Buscar por nome ou características"></label>
+        <label><span>Filtrar por tipo</span>
+          <select data-catalog-type-select="inventory">
+            <option value="">Todos os tipos</option>
+            <option value="arma">Armas</option>
+            <option value="municao">Munições</option>
+            <option value="protecao">Proteções</option>
+            <option value="geral">Itens Operacionais / Gerais</option>
+            <option value="amaldiçoado">Itens Amaldiçoados</option>
+          </select>
+        </label>
+        <label><span>Filtrar por categoria</span>
+          <select data-catalog-category-select="inventory">
+            <option value="">Todas as categorias</option>
+            <option value="0">Categoria 0</option>
+            <option value="I">Categoria I</option>
+            <option value="II">Categoria II</option>
+            <option value="III">Categoria III</option>
+            <option value="IV">Categoria IV</option>
+          </select>
+        </label>
+      </div>
+      <div class="catalog-grid" data-catalog-list="inventory">
+        ${catalogItemCards}
+      </div>
+    </div>` : ""}
+    <section class="content-panel inventory-summary">
+      <div class="inventory-count-grid">${orderItemCategories.map((category) => `<div class="inventory-count">
+        <span>Categoria ${category}</span><strong>${categoryCounts[category]}${inventory.itemLimits[category] === "" ? "" : ` / ${escapeHtml(inventory.itemLimits[category])}`}</strong>
+      </div>`).join("")}</div>
+      ${canEdit ? `<form class="inventory-settings-form" data-form="character-section" data-section="inventory" data-id="${escapeHtml(character.id)}">
+        <div class="form-grid">
+          <label><span>Pontos de prestígio</span><input name="prestige" type="number" min="0" max="999999" step="1" value="${escapeHtml(inventory.prestige)}"></label>
+          <label><span>Patente</span><input name="rank" maxlength="80" value="${escapeHtml(inventory.rank)}"></label>
+          <label><span>Limite de crédito</span><input name="creditLimit" maxlength="80" value="${escapeHtml(inventory.creditLimit)}"></label>
+          <label><span>Carga base máxima</span><input name="capacity" type="number" min="0" max="9999" step="1" value="${escapeHtml(inventory.capacity)}"></label>
+          ${itemLimits}
+        </div>
+        <p class="form-hint">Os limites são configuráveis conforme as regras da sua mesa. Bônus de carga de itens são somados à capacidade base.</p>
+        <div class="form-actions"><button class="button button-primary" type="submit">Salvar limites e patente</button></div>
+      </form>` : `<dl class="character-entry-facts">
+        <div><dt>Pontos de prestígio</dt><dd>${escapeHtml(inventory.prestige || "—")}</dd></div>
+        <div><dt>Patente</dt><dd>${escapeHtml(inventory.rank || "—")}</dd></div>
+        <div><dt>Limite de crédito</dt><dd>${escapeHtml(inventory.creditLimit || "—")}</dd></div>
+        <div><dt>Carga base máxima</dt><dd>${escapeHtml(inventory.capacity)} espaços</dd></div>
+      </dl>`}
+    </section>
+    <div class="character-entry-list" data-inventory-list>${items || `<p class="empty-panel">Você ainda não possui itens.</p>`}</div>
+    ${canEdit ? `<form class="content-panel character-editor" data-form="character-entry" data-entry-type="inventory" data-id="" hidden>
+      <h3 data-entry-form-title>Novo item</h3>
+      <div class="form-grid">
+        <label><span>Nome *</span><input name="name" required maxlength="100"></label>
+        <label><span>Tipo</span><select name="type" data-inventory-type>
+          ${orderItemTypes.map(([type, label]) => `<option value="${type}">${label}</option>`).join("")}
+        </select></label>
+        <label><span>Categoria</span><select name="category"><option value="">Sem categoria</option>
+          ${orderItemCategories.map((category) => `<option value="${category}">${category}</option>`).join("")}
+        </select></label>
+        <label><span>Quantidade</span><input name="quantity" type="number" min="1" max="999" step="1" value="1" required></label>
+        <label><span>Espaços por unidade</span><input name="spaces" type="number" min="-99" max="999" step="1" value="1"></label>
+        <label><span>Bônus de carga</span><input name="capacityBonus" type="number" min="0" max="999" step="1" value="0"></label>
+      </div>
+      <div class="form-grid inventory-specific-fields" data-inventory-specific="arma">
+        <label><span>Dano</span><input name="damage" maxlength="80"></label>
+        <label><span>Crítico</span><input name="critical" maxlength="40"></label>
+        <label><span>Alcance</span><input name="range" maxlength="80"></label>
+        <label><span>Tipo de dano</span><input name="damageType" maxlength="80"></label>
+        <label><span>Munição</span><input name="ammunition" maxlength="80"></label>
+      </div>
+      <div class="form-grid inventory-specific-fields" data-inventory-specific="municao" hidden>
+        <label><span>Tipo/arma compatível</span><input name="compatibleWeapon" maxlength="80"></label>
+      </div>
+      <div class="form-grid inventory-specific-fields" data-inventory-specific="protecao" hidden>
+        <label><span>Bônus de defesa</span><input name="defense" maxlength="40"></label>
+        <label><span>Resistências</span><input name="resistance" maxlength="160"></label>
+      </div>
+      <label><span>Descrição e detalhes</span><textarea name="description" rows="3" maxlength="2000"></textarea></label>
+      <div class="form-actions"><button class="button button-primary" type="submit">Salvar item</button>
+        <button class="button button-outline" type="button" data-action="cancel-character-entry" data-entry-type="inventory">Cancelar</button></div>
+    </form>` : ""}
+  </section>`;
+}
+
+function renderOrderDescriptionTab(character, canEdit) {
+  const fields = character.fields || {};
+  const descriptionFields = [
+    ["appearance", "Aparência", "Nome, gênero, idade, descrição física..."],
+    ["personality", "Personalidade", "Traços marcantes, opiniões, ideais..."],
+    ["history", "Histórico", "Infância, relação com a família, contato com o Paranormal, eventos bons e ruins..."],
+    ["objective", "Objetivo", "Por que ele faz parte da Ordem? Porque luta contra o Outro Lado?"]
+  ];
+  return `<section class="character-entry-section">
+    <div class="panel-heading"><div><h2>Descrição do personagem</h2>
+      <p class="form-hint">Anotações e informações narrativas do agente.</p></div></div>
+    ${canEdit ? `<form class="content-panel form-panel" data-form="character-section" data-section="description" data-id="${escapeHtml(character.id)}">
+      <label><span>Anotações</span><textarea name="notes" rows="4" maxlength="5000" placeholder="Anotações pessoais do agente...">${escapeHtml(character.notes || "")}</textarea></label>
+      ${descriptionFields.map(([name, label, placeholder]) => `<label><span>${label}</span>
+        <textarea name="${name}" rows="4" maxlength="2000" placeholder="${placeholder}">${escapeHtml(fields[label] || "")}</textarea></label>`).join("")}
+      <div class="form-actions"><button class="button button-primary" type="submit">Salvar descrição</button></div>
+    </form>` : `<section class="content-panel character-description-list">
+      <article><h3>Anotações</h3><p>${escapeHtml(character.notes || "Sem anotações.")}</p></article>
+      ${descriptionFields.map(([, label]) => `<article><h3>${label}</h3><p>${escapeHtml(fields[label] || "Não informado.")}</p></article>`).join("")}
+    </section>`}
+  </section>`;
+}
+
+function renderCharacterTabs(sheetContent, combatContent, extraTabs = []) {
+  const tabs = [
+    { id: "ficha", label: "Ficha" },
+    { id: "combate", label: "Combate" },
+    ...extraTabs.map(({ id, label }) => ({ id, label }))
+  ];
   return `<div class="character-tab-container" data-character-tabs>
     <nav class="character-tabs" role="tablist" aria-label="Seções da ficha">
-      <button class="character-tab-button is-current" id="character-tab-ficha" type="button" role="tab"
-        aria-selected="true" aria-controls="character-panel-ficha" data-action="character-tab" data-tab="ficha">Ficha</button>
-      <button class="character-tab-button" id="character-tab-combate" type="button" role="tab"
-        aria-selected="false" aria-controls="character-panel-combate" data-action="character-tab" data-tab="combate" tabindex="-1">Combate</button>
+      ${tabs.map(({ id, label }, index) => `<button class="character-tab-button ${index === 0 ? "is-current" : ""}"
+        id="character-tab-${id}" type="button" role="tab" aria-selected="${index === 0}"
+        aria-controls="character-panel-${id}" data-action="character-tab" data-tab="${id}" tabindex="${index === 0 ? "0" : "-1"}">${label}</button>`).join("")}
     </nav>
     <section class="character-tab-panel" id="character-panel-ficha" role="tabpanel"
       aria-labelledby="character-tab-ficha" data-character-tab-panel="ficha">${sheetContent}</section>
     ${combatContent}
+    ${extraTabs.map(({ id, content }) => `<section class="character-tab-panel" id="character-panel-${id}"
+      role="tabpanel" aria-labelledby="character-tab-${id}" data-character-tab-panel="${id}" hidden>${content}</section>`).join("")}
   </div>`;
 }
 
@@ -2152,13 +2638,20 @@ function renderCharacter(id, sessionId = "") {
     const activeSession = campaign && data.sessions.find((session) =>
       session.campaignId === campaign.id && session.status === "active"
     );
-    const canEditResources = character.owner === currentUser().id || canManageCampaign(campaign);
+    const canEditCharacter = character.owner === currentUser().id || canManageCampaign(campaign);
+    const extraTabs = [
+      { id: "habilidades", label: "Habilidades", content: renderOrderAbilityTab(character, canEditCharacter) },
+      { id: "rituais", label: "Rituais", content: renderOrderRitualTab(character, canEditCharacter) },
+      { id: "inventario", label: "Inventário", content: renderOrderInventoryTab(character, canEditCharacter) },
+      { id: "descricao", label: "Descrição", content: renderOrderDescriptionTab(character, canEditCharacter) }
+    ];
     return pageLayout(`${pageHeader("Ordem Paranormal", escapeHtml(character.name),
       campaign ? `Campanha: ${escapeHtml(campaign.name)}` : "Ficha sem campanha vinculada.",
       character.owner === currentUser().id ? routeLink(`#ficha/${character.id}/editar`, "Editar ficha", "button button-primary") : "")}
       ${renderCharacterTabs(
-        renderOrderCharacterSheet(character, campaign, { canEditResources, activeSession: Boolean(activeSession) }),
-        renderOrderCombatPanel(character, character.owner === currentUser().id)
+        renderOrderCharacterSheet(character, campaign, { canEditResources: canEditCharacter, activeSession: Boolean(activeSession) }),
+        renderOrderCombatPanel(character, canEditCharacter),
+        extraTabs
       )}
       ${returnLink}`);
   }
@@ -2188,11 +2681,11 @@ function renderActiveSession(id) {
   const isMaster = canManageCampaign(campaign);
   const characterItems = characters.map((character) => `<article class="list-card compact-card">
     <div><h3>${escapeHtml(character.name)}</h3><p>${escapeHtml(getSystemName(character.system))}</p></div>
-    ${routeLink(`#ficha/${character.id}?sessao=${session.id}`, character.system === "ordem" ? "Abrir ficha e atualizar recursos" : "Abrir ficha")}
+    ${routeLink(`#ficha/${character.id}?sessao=${session.id}`, character.system === "ordem" ? "Abrir ficha e atualizar recursos e inventário" : "Abrir ficha")}
   </article>`).join("");
   return pageLayout(`${pageHeader(`Sessão ${getCampaignSessionNumber(session)} · em andamento`, escapeHtml(campaign.name),
     `Iniciada em ${formatDateTime(session.startedAt)}.`, routeLink(`#campanha/${campaign.id}`, "Voltar à campanha"))}
-    <p class="live-banner"><span class="status-dot"></span> Sessão ativa · altere PV, PE e Sanidade dentro da ficha do personagem; as mudanças serão registradas automaticamente.</p>
+    <p class="live-banner"><span class="status-dot"></span> Sessão ativa · alterações de recursos e itens do inventário serão registradas automaticamente.</p>
     <section class="content-panel"><div class="panel-heading"><h2>Fichas da campanha</h2></div>
       <div class="list-stack">${characterItems || `<p class="empty-panel">Ainda não há fichas vinculadas a esta campanha.</p>`}</div>
       <p class="form-hint">Jogadores podem atualizar as próprias fichas. O mestre pode atualizar os recursos de todas as fichas da campanha.</p>
@@ -2402,6 +2895,69 @@ function routeFromHash() {
   return { page: page || "inicio", id: id || "", action: action || "", query: new URLSearchParams(query) };
 }
 
+function filterOrderCharacterEntries() {
+  const search = appPage.querySelector("[data-ability-filter]");
+  const abilityList = appPage.querySelector("[data-ability-list]");
+  if (search && abilityList) {
+    const term = search.value.trim().toLocaleLowerCase("pt-BR");
+    abilityList.querySelectorAll("[data-ability-card]").forEach((card) => {
+      card.hidden = !card.dataset.search.includes(term);
+    });
+  }
+  const circle = appPage.querySelector("[data-ritual-circle-filter]");
+  const element = appPage.querySelector("[data-ritual-element-filter]");
+  const ritualList = appPage.querySelector("[data-ritual-list]");
+  if (ritualList) {
+    ritualList.querySelectorAll("[data-ritual-card]").forEach((card) => {
+      card.hidden = Boolean((circle?.value && card.dataset.circle !== circle.value)
+        || (element?.value && card.dataset.element !== element.value));
+    });
+  }
+}
+
+function filterCatalog(catalogType) {
+  const panel = appPage.querySelector(`[data-catalog-panel="${catalogType}"]`);
+  if (!panel) return;
+
+  const searchInput = panel.querySelector(`[data-catalog-search="${catalogType}"]`);
+  const query = searchInput ? searchInput.value.trim().toLocaleLowerCase("pt-BR") : "";
+
+  if (catalogType === "ability") {
+    const groupSelect = panel.querySelector("[data-catalog-group]");
+    const selectedGroup = groupSelect ? groupSelect.value : "";
+    const cards = panel.querySelectorAll('[data-catalog-card="ability"]');
+    for (const card of cards) {
+      const matchSearch = !query || (card.dataset.search && card.dataset.search.includes(query));
+      const matchGroup = !selectedGroup || card.dataset.group === selectedGroup;
+      card.hidden = !(matchSearch && matchGroup);
+    }
+  } else if (catalogType === "ritual") {
+    const circleSelect = panel.querySelector("[data-catalog-circle]");
+    const elementSelect = panel.querySelector("[data-catalog-element]");
+    const selectedCircle = circleSelect ? circleSelect.value : "";
+    const selectedElement = elementSelect ? elementSelect.value : "";
+    const cards = panel.querySelectorAll('[data-catalog-card="ritual"]');
+    for (const card of cards) {
+      const matchSearch = !query || (card.dataset.search && card.dataset.search.includes(query));
+      const matchCircle = !selectedCircle || card.dataset.circle === selectedCircle;
+      const matchElement = !selectedElement || card.dataset.element === selectedElement;
+      card.hidden = !(matchSearch && matchCircle && matchElement);
+    }
+  } else if (catalogType === "inventory") {
+    const typeSelect = panel.querySelector("[data-catalog-type-select]");
+    const categorySelect = panel.querySelector("[data-catalog-category-select]");
+    const selectedType = typeSelect ? typeSelect.value : "";
+    const selectedCategory = categorySelect ? categorySelect.value : "";
+    const cards = panel.querySelectorAll('[data-catalog-card="inventory"]');
+    for (const card of cards) {
+      const matchSearch = !query || (card.dataset.search && card.dataset.search.includes(query));
+      const matchType = !selectedType || card.dataset.itemType === selectedType;
+      const matchCategory = !selectedCategory || card.dataset.itemCategory === selectedCategory;
+      card.hidden = !(matchSearch && matchType && matchCategory);
+    }
+  }
+}
+
 async function renderRoute() {
   const route = routeFromHash();
   const requestedHash = location.hash;
@@ -2427,7 +2983,8 @@ async function renderRoute() {
   homeView.classList.toggle("hidden", !isHome);
   appPage.classList.toggle("hidden", isHome);
   siteNav.querySelectorAll("a").forEach((link) => {
-    link.classList.toggle("is-current", link.getAttribute("href") === `#${route.page}`);
+    link.classList.toggle("is-current", link.getAttribute("href") === `#${route.page}`
+      || (link.getAttribute("href") === "#fichas" && route.page === "ficha"));
   });
   if (isHome) {
     appPage.innerHTML = "";
@@ -2439,7 +2996,7 @@ async function renderRoute() {
     }
     return;
   }
-  if (!currentUser() && ["painel", "campanha", "campanhas", "minhas-campanhas", "nova-campanha", "ficha", "sessao", "historico", "gestao-mesa"].includes(route.page)) {
+  if (!currentUser() && ["painel", "fichas", "campanha", "campanhas", "minhas-campanhas", "nova-campanha", "ficha", "sessao", "historico", "gestao-mesa"].includes(route.page)) {
     appPage.innerHTML = pageLayout(requireLogin());
     window.scrollTo(0, 0);
     return;
@@ -2448,6 +3005,9 @@ async function renderRoute() {
   switch (route.page) {
     case "painel":
       appPage.innerHTML = renderDashboard();
+      break;
+    case "fichas":
+      appPage.innerHTML = renderCharacterList();
       break;
     case "campanhas":
       appPage.innerHTML = renderCampaignList();
@@ -2734,6 +3294,120 @@ function buildOrderCharacterFields(form, values) {
   return fields;
 }
 
+function updateInventorySpecificFields(form) {
+  const selectedType = form.elements.type.value;
+  form.querySelectorAll("[data-inventory-specific]").forEach((group) => {
+    group.hidden = group.dataset.inventorySpecific !== selectedType;
+    if (group.hidden) group.querySelectorAll("input").forEach((input) => { input.value = ""; });
+  });
+}
+
+function openCharacterEntryEditor(form, entry = null, itemType = "") {
+  form.reset();
+  form.dataset.id = entry?.id || "";
+  form.querySelector("[data-entry-form-title]").textContent = entry
+    ? `Editar ${form.dataset.entryType === "inventory" ? "item" : form.dataset.entryType === "ritual" ? "ritual" : "habilidade"}`
+    : `Novo ${form.dataset.entryType === "inventory" ? "item" : form.dataset.entryType === "ritual" ? "ritual" : "habilidade"}`;
+  for (const [name, value] of Object.entries(entry || {})) {
+    if (form.elements[name]) form.elements[name].value = value ?? "";
+  }
+  if (!entry && itemType && form.elements.type) form.elements.type.value = itemType;
+  updateInventorySpecificFields(form);
+  form.hidden = false;
+  form.elements.name.focus();
+}
+
+function getCharacterEntryList(character, type) {
+  if (type === "ability") return Array.isArray(character.fields?.Habilidades)
+    ? character.fields.Habilidades.filter((entry) => entry && typeof entry === "object" && !Array.isArray(entry))
+    : [];
+  if (type === "ritual") return Array.isArray(character.fields?.Rituais)
+    ? character.fields.Rituais.filter((entry) => entry && typeof entry === "object" && !Array.isArray(entry))
+    : [];
+  if (type === "inventory") return getOrderInventory(character).items;
+  throw new Error("Tipo de conteúdo inválido.");
+}
+
+function characterEntryFromForm(form) {
+  const values = new FormData(form);
+  const entry = {
+    id: form.dataset.id || crypto.randomUUID(),
+    name: String(values.get("name") || "").trim()
+  };
+  if (form.dataset.entryType === "ability") {
+    return {
+      ...entry,
+      category: String(values.get("category") || "Própria"),
+      description: String(values.get("description") || "").trim()
+    };
+  }
+  if (form.dataset.entryType === "ritual") {
+    return {
+      ...entry,
+      element: String(values.get("element") || ""),
+      circle: Number(values.get("circle")),
+      execution: String(values.get("execution") || "").trim(),
+      range: String(values.get("range") || "").trim(),
+      target: String(values.get("target") || "").trim(),
+      duration: String(values.get("duration") || "").trim(),
+      resistance: String(values.get("resistance") || "").trim(),
+      description: String(values.get("description") || "").trim()
+    };
+  }
+  if (form.dataset.entryType === "inventory") {
+    return {
+      ...entry,
+      type: String(values.get("type") || ""),
+      category: String(values.get("category") || ""),
+      quantity: Number(values.get("quantity")),
+      spaces: Number(values.get("spaces")),
+      capacityBonus: Number(values.get("capacityBonus")),
+      damage: String(values.get("damage") || "").trim(),
+      critical: String(values.get("critical") || "").trim(),
+      range: String(values.get("range") || "").trim(),
+      damageType: String(values.get("damageType") || "").trim(),
+      ammunition: String(values.get("ammunition") || "").trim(),
+      compatibleWeapon: String(values.get("compatibleWeapon") || "").trim(),
+      defense: String(values.get("defense") || "").trim(),
+      resistance: String(values.get("resistance") || "").trim(),
+      description: String(values.get("description") || "").trim()
+    };
+  }
+  throw new Error("Tipo de conteúdo inválido.");
+}
+
+async function saveCharacterSection(characterId, section, value) {
+  if (section === "inventory") {
+    const optionalInteger = (rawValue, field) => {
+      if (rawValue === "" || rawValue === null || rawValue === undefined) return null;
+      const number = Number(rawValue);
+      if (!Number.isSafeInteger(number)) throw new Error(`Informe um valor inteiro válido para ${field}.`);
+      return number;
+    };
+    value = {
+      ...value,
+      prestige: optionalInteger(value.prestige, "pontos de prestígio"),
+      itemLimits: Object.fromEntries(orderItemCategories.map((category) => {
+        return [category, optionalInteger(value.itemLimits?.[category], `limite da categoria ${category}`)];
+      }))
+    };
+  }
+  await apiRequest(`/characters/${characterId}/section`, {
+    method: "PATCH",
+    body: JSON.stringify({ section, value })
+  });
+  const openPanelType = window.sessionStorage?.getItem("openCatalogPanel");
+  await renderRoute();
+  const tabBySection = { abilities: "habilidades", rituals: "rituais", inventory: "inventario", description: "descricao" };
+  const tabs = appPage.querySelector("[data-character-tabs]");
+  if (tabs && tabBySection[section]) setCharacterTab(tabs, tabBySection[section]);
+  if (openPanelType) {
+    window.sessionStorage?.removeItem("openCatalogPanel");
+    const panel = appPage.querySelector(`[data-catalog-panel="${openPanelType}"]`);
+    if (panel) panel.hidden = false;
+  }
+}
+
 async function handlePageSubmit(event) {
   const form = event.target.closest("form[data-form]");
   if (!form) return;
@@ -2815,6 +3489,79 @@ async function handlePageSubmit(event) {
       return;
     }
 
+    if (formType === "character-section") {
+      const characterId = form.dataset.id;
+      const section = form.dataset.section;
+      let value;
+      if (section === "inventory") {
+        const character = getCharacter(characterId);
+        if (!character) throw new Error("Ficha não encontrada.");
+        const inventory = getOrderInventory(character);
+        const optionalInteger = (name, maximum) => {
+          const raw = String(values.get(name) || "").trim();
+          if (!raw) return null;
+          const number = Number(raw);
+          if (!Number.isSafeInteger(number) || number < 0 || number > maximum) {
+            throw new Error(`Informe um valor válido para ${name}.`);
+          }
+          return number;
+        };
+        value = {
+          prestige: optionalInteger("prestige", 999999),
+          rank: String(values.get("rank") || "").trim(),
+          creditLimit: String(values.get("creditLimit") || "").trim(),
+          capacity: Number(values.get("capacity")),
+          itemLimits: Object.fromEntries(orderItemCategories.map((category) => [
+            category, optionalInteger(`limit${category}`, 999)
+          ]))
+        };
+        if (!Number.isSafeInteger(value.capacity) || value.capacity < 0 || value.capacity > 9999) {
+          throw new Error("Informe uma carga base máxima entre 0 e 9999.");
+        }
+      } else if (section === "description") {
+        value = {
+          notes: String(values.get("notes") || "").trim(),
+          appearance: String(values.get("appearance") || "").trim(),
+          personality: String(values.get("personality") || "").trim(),
+          history: String(values.get("history") || "").trim(),
+          objective: String(values.get("objective") || "").trim()
+        };
+      } else {
+        throw new Error("Seção da ficha inválida.");
+      }
+      await saveCharacterSection(characterId, section, value);
+      showPageNotice("Alterações salvas.");
+      return;
+    }
+
+    if (formType === "character-entry") {
+      if (!form.reportValidity()) return;
+      const entry = characterEntryFromForm(form);
+      if (!entry.name) throw new Error("Informe um nome.");
+      const character = getCharacter(routeFromHash().id);
+      if (!character) throw new Error("Ficha não encontrada.");
+      const entryType = form.dataset.entryType;
+      const entries = getCharacterEntryList(character, entryType);
+      const nextEntries = form.dataset.id
+        ? entries.map((item) => item.id === form.dataset.id ? entry : item)
+        : [...entries, entry];
+      let section;
+      let value;
+      if (entryType === "ability") {
+        section = "abilities";
+        value = nextEntries;
+      } else if (entryType === "ritual") {
+        section = "rituals";
+        value = nextEntries;
+      } else {
+        section = "inventory";
+        value = { ...getOrderInventory(character), items: nextEntries };
+      }
+      await saveCharacterSection(character.id, section, value);
+      showPageNotice("Alterações salvas.");
+      return;
+    }
+
     if (formType === "invite") {
       await apiRequest(`/campaigns/${routeFromHash().id}/members`, {
         method: "POST",
@@ -2890,8 +3637,186 @@ async function handlePageClick(event) {
   if (!actionButton) return;
   const action = actionButton.dataset.action;
 
+  if (action === "delete-character") {
+    const character = getCharacter(actionButton.dataset.id);
+    if (!character || character.owner !== currentUser()?.id) {
+      showPageNotice("Você só pode excluir fichas próprias.", true);
+      return;
+    }
+    const confirmed = window.confirm(
+      `Excluir a ficha "${character.name}"? Esta ação não pode ser desfeita.${character.campaignId ? " A ficha também deixará de aparecer na campanha." : ""}`
+    );
+    if (!confirmed) return;
+    actionButton.disabled = true;
+    try {
+      await apiRequest(`/characters/${character.id}`, { method: "DELETE" });
+      await renderRoute();
+    } catch (error) {
+      actionButton.disabled = false;
+      showPageNotice(error.message, true);
+    }
+    return;
+  }
+
   if (action === "character-tab") {
     setCharacterTab(actionButton.closest("[data-character-tabs]"), actionButton.dataset.tab);
+    return;
+  }
+
+  if (action === "toggle-catalog") {
+    const catalogType = actionButton.dataset.catalogType || actionButton.dataset.catalogTarget;
+    const panel = appPage.querySelector(`[data-catalog-panel="${catalogType}"]`);
+    if (panel) {
+      panel.hidden = !panel.hidden;
+      if (!panel.hidden) {
+        const searchInput = panel.querySelector(`[data-catalog-search="${catalogType}"]`);
+        if (searchInput) searchInput.focus();
+      }
+    }
+    return;
+  }
+
+  if (action === "close-catalog") {
+    const catalogType = actionButton.dataset.catalogType || actionButton.dataset.catalogTarget;
+    const panel = appPage.querySelector(`[data-catalog-panel="${catalogType}"]`);
+    if (panel) panel.hidden = true;
+    return;
+  }
+
+  if (action === "add-catalog-item") {
+    const character = getCharacter(routeFromHash().id);
+    if (!character) {
+      showPageNotice("Ficha não encontrada.", true);
+      return;
+    }
+    const type = actionButton.dataset.catalogType;
+    const id = actionButton.dataset.catalogId;
+    actionButton.disabled = true;
+
+    try {
+      window.sessionStorage?.setItem("openCatalogPanel", type);
+      if (type === "ability") {
+        const item = getOrderAbilitiesCatalog().find((entry) => entry.id === id);
+        if (!item) throw new Error("Habilidade não encontrada no compêndio.");
+        const entries = getCharacterEntryList(character, "ability");
+        if (entries.some((entry) => entry.name.toLocaleLowerCase("pt-BR") === item.name.toLocaleLowerCase("pt-BR"))) {
+          throw new Error(`A habilidade "${item.name}" já está na ficha.`);
+        }
+        const newAbility = {
+          id: crypto.randomUUID(),
+          name: item.name,
+          category: item.category || "Própria",
+          description: item.description || ""
+        };
+        await saveCharacterSection(character.id, "abilities", [...entries, newAbility]);
+        showPageNotice(`Habilidade "${item.name}" adicionada à ficha.`);
+      } else if (type === "ritual") {
+        const item = getOrderRitualsCatalog().find((entry) => entry.id === id);
+        if (!item) throw new Error("Ritual não encontrado no grimório.");
+        const entries = getCharacterEntryList(character, "ritual");
+        if (entries.some((entry) => entry.name.toLocaleLowerCase("pt-BR") === item.name.toLocaleLowerCase("pt-BR"))) {
+          throw new Error(`O ritual "${item.name}" já foi aprendido.`);
+        }
+        const newRitual = {
+          id: crypto.randomUUID(),
+          name: item.name,
+          element: item.element || "",
+          circle: Number(item.circle) || 1,
+          execution: item.execution || "",
+          range: item.range || "",
+          target: item.target || "",
+          duration: item.duration || "",
+          resistance: item.resistance || "",
+          description: item.description || ""
+        };
+        await saveCharacterSection(character.id, "rituals", [...entries, newRitual]);
+        showPageNotice(`Ritual "${item.name}" aprendido!`);
+      } else if (type === "inventory") {
+        const item = getOrderInventoryCatalog().find((entry) => entry.id === id);
+        if (!item) throw new Error("Item não encontrado no arsenal.");
+        const inventory = getOrderInventory(character);
+        const newItem = {
+          id: crypto.randomUUID(),
+          name: item.name,
+          type: item.type || "geral",
+          category: item.category || "0",
+          quantity: Number(item.quantity) || 1,
+          spaces: Number(item.spaces) || 0,
+          capacityBonus: Number(item.capacityBonus) || 0,
+          damage: item.damage || "",
+          critical: item.critical || "",
+          range: item.range || "",
+          damageType: item.damageType || "",
+          ammunition: item.ammunition || "",
+          compatibleWeapon: item.compatibleWeapon || "",
+          defense: item.defense || "",
+          resistance: item.resistance || "",
+          description: item.description || ""
+        };
+        await saveCharacterSection(character.id, "inventory", {
+          ...inventory,
+          items: [...inventory.items, newItem]
+        });
+        showPageNotice(`"${item.name}" adicionado ao inventário.`);
+      }
+    } catch (error) {
+      window.sessionStorage?.removeItem("openCatalogPanel");
+      actionButton.disabled = false;
+      showPageNotice(error.message, true);
+    }
+    return;
+  }
+
+  if (action === "new-character-entry" || action === "edit-character-entry") {
+    const type = actionButton.dataset.entryType;
+    const editor = appPage.querySelector(`form[data-form="character-entry"][data-entry-type="${type}"]`);
+    if (!editor) return;
+    const character = getCharacter(routeFromHash().id);
+    if (!character) {
+      showPageNotice("Ficha não encontrada.", true);
+      return;
+    }
+    const entry = action === "edit-character-entry"
+      ? getCharacterEntryList(character, type).find((item) => item.id === actionButton.dataset.id)
+      : null;
+    if (action === "edit-character-entry" && !entry) {
+      showPageNotice("Este conteúdo não está mais disponível para edição.", true);
+      return;
+    }
+    openCharacterEntryEditor(editor, entry, actionButton.dataset.itemType || "");
+    return;
+  }
+
+  if (action === "cancel-character-entry") {
+    const editor = appPage.querySelector(`form[data-form="character-entry"][data-entry-type="${actionButton.dataset.entryType}"]`);
+    if (editor) editor.hidden = true;
+    return;
+  }
+
+  if (action === "remove-character-entry") {
+    const type = actionButton.dataset.entryType;
+    const character = getCharacter(routeFromHash().id);
+    if (!character) {
+      showPageNotice("Ficha não encontrada.", true);
+      return;
+    }
+    if (!window.confirm("Remover este conteúdo da ficha?")) return;
+    const entry = getCharacterEntryList(character, type).find((item) => item.id === actionButton.dataset.id);
+    if (!entry) {
+      showPageNotice("Este conteúdo já não está na ficha.", true);
+      return;
+    }
+    const nextEntries = getCharacterEntryList(character, type).filter((item) => item.id !== entry.id);
+    const section = type === "ability" ? "abilities" : type === "ritual" ? "rituals" : "inventory";
+    const value = type === "inventory"
+      ? { ...getOrderInventory(character), items: nextEntries }
+      : nextEntries;
+    try {
+      await saveCharacterSection(character.id, section, value);
+      showPageNotice(type === "inventory" ? "Item removido." : "Conteúdo removido.");
+    } catch (error) {
+      showPageNotice(error.message, true);
+    }
     return;
   }
 
@@ -3351,6 +4276,14 @@ appPage.addEventListener("input", (event) => {
   updateOrderCharacterForm(form);
 });
 appPage.addEventListener("change", (event) => {
+  if (event.target.matches("[data-inventory-type]")) {
+    updateInventorySpecificFields(event.target.form);
+    return;
+  }
+  if (event.target.matches("[data-ritual-circle-filter], [data-ritual-element-filter]")) {
+    filterOrderCharacterEntries();
+    return;
+  }
   const characterCheckbox = event.target.closest("[data-character-select]");
   if (characterCheckbox) {
     const panel = characterCheckbox.closest(".content-panel");
@@ -3393,9 +4326,14 @@ appPage.addEventListener("change", (event) => {
 });
 appPage.addEventListener("input", (event) => {
   if (event.target.matches("#public-search")) filterPublicTableCards();
+  if (event.target.matches("[data-ability-filter]")) filterOrderCharacterEntries();
+  if (event.target.matches("[data-catalog-search]")) filterCatalog(event.target.dataset.catalogSearch);
 });
 appPage.addEventListener("change", (event) => {
   if (event.target.matches("#public-system-filter")) filterPublicTableCards();
+  if (event.target.matches("[data-catalog-group]")) filterCatalog("ability");
+  if (event.target.matches("[data-catalog-circle], [data-catalog-element]")) filterCatalog("ritual");
+  if (event.target.matches("[data-catalog-type-select], [data-catalog-category-select]")) filterCatalog("inventory");
 });
 window.addEventListener("hashchange", renderRoute);
 supabaseClient?.auth.onAuthStateChange((event) => {

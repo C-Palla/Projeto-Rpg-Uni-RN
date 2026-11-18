@@ -117,13 +117,19 @@ O site reúne em um só lugar:
 - A ficha deve conter, no mínimo, nome do personagem, sistema, jogador proprietário e os campos pertinentes ao sistema.
 - Cada sistema pode ter atributos e recursos diferentes; o formulário deve refletir essa diferença.
 - O jogador deve poder editar e salvar sua ficha.
+- Cada jogador pode manter até 15 fichas próprias. Para criar outra ao atingir o limite, deve excluir uma ficha; fichas com eventos de sessão registrados não podem ser excluídas.
 - A ficha pode ser vinculada a uma campanha; o vínculo não deve tornar a ficha pública por padrão.
-- O painel deve listar as fichas próprias, avulsas ou vinculadas. Um jogador pode vincular uma única ficha avulsa própria do mesmo sistema por campanha e pode desvinculá-la para escolher outra.
+- A aba Fichas deve listar as fichas próprias, avulsas ou vinculadas; o painel deve indicar a quantidade utilizada e direcionar para essa aba. Um jogador pode vincular uma única ficha avulsa própria do mesmo sistema por campanha e pode desvinculá-la para escolher outra.
 - O mestre pode vincular quantas fichas avulsas próprias quiser e pode selecionar qualquer agente da campanha para desvinculá-lo. As fichas permanecem com seus proprietários como avulsas, e o histórico das sessões é preservado.
 - A lista de personagens da campanha deve mostrar o nome do proprietário de cada agente.
 - O sistema deve validar campos obrigatórios e valores numéricos dentro dos limites definidos para cada campo.
 - A visualização da ficha deve oferecer uma aba Combate com rolador de dados d4, d6, d8, d10, d12, d20 e d100, mostrando os resultados individuais e a soma.
 - Para Ordem Paranormal, o proprietário deve poder cadastrar, editar e excluir ataques na aba Combate da ficha; membros autorizados da campanha podem consultá-los e testá-los. Os ataques incluem dano, crítico, multiplicador, bônus, tipo de dano, alcance, perícia, atributo de dano, danos extras, imagem e anotações formatadas.
+- A ficha de Ordem Paranormal deve oferecer abas de Habilidades, Rituais, Inventário e Descrição. A habilidade concedida pela origem escolhida é exibida automaticamente; as demais podem ser selecionadas do catálogo oficial ou criadas pelo jogador.
+- As abas de Habilidades, Rituais e Inventário contam com catálogos oficiais integrados com busca e filtros (Compêndio de Habilidades com poderes de combatente, especialista, ocultista, trilhas, origens e poderes paranormais; Grimório de Rituais de 1º a 4º círculo de Conhecimento, Energia, Medo, Morte, Sangue e Varia; Arsenal de Equipamentos com armas, munições, proteções, itens operacionais e itens amaldiçoados de categorias 0 a IV), permitindo adicionar à ficha com um clique e manter a criação de itens próprios.
+- O inventário deve permitir editar pontos de prestígio, patente, limite de crédito, carga base, limites por categoria (0 a IV) e itens. A carga adicional concedida por itens é somada à carga base; os limites permanecem configuráveis por ficha.
+- A Descrição deve reunir anotações, aparência, personalidade, histórico e objetivo do personagem.
+- O proprietário e o mestre da campanha privada podem editar essas seções; os demais participantes podem consultá-las.
 - O teste de ataque deve mostrar o d20 natural, o total com o bônus e se o dado atingiu a faixa crítica configurada; não deve decidir acerto nem rolar dano.
 - A galeria de imagens deve ser privada por padrão. Uma imagem anexada a um ataque pode ser consultada pelos membros autorizados da campanha da ficha; as demais imagens permanecem visíveis apenas ao proprietário.
 
@@ -134,6 +140,7 @@ O site reúne em um só lugar:
 - Ao abrir uma ficha a partir da sessão ativa, deve ser possível voltar diretamente à sessão sem passar pela página da campanha.
 - Durante uma sessão ativa, alterações de ficha feitas pelo site devem gerar registros com personagem, campo, valor anterior, valor novo, autor e horário.
 - O registro automático deve incluir mudanças relevantes, como vida, mana/energia, itens e demais campos rastreados.
+- Adições, alterações e remoções de itens do inventário devem entrar na linha do tempo somente quando salvas durante uma sessão ativa; mudanças feitas fora da sessão atualizam a ficha sem criar evento.
 - O sistema não deve registrar alterações que não foram realizadas pelo próprio site.
 - O mestre deve poder consultar os eventos em ordem cronológica.
 - O registro automático deve ser identificado como **Resumo automático / linha do tempo**, sem ser apresentado como texto escrito pelo mestre.

@@ -82,6 +82,44 @@ async function register(name, email) {
   return result.cookie;
 }
 
+test("limita cada conta a 15 fichas e libera espaço após exclusão", async () => {
+  const cookie = await register("Jogador do limite", "limite@example.com");
+  const characterIds = [];
+  for (let index = 1; index <= 15; index += 1) {
+    const result = await api("/characters", {
+      cookie,
+      method: "POST",
+      body: { name: `Ficha ${index}`, system: "dnd", fields: {}, notes: "" }
+    });
+    assert.equal(result.response.status, 201);
+    characterIds.push(result.payload.character.id);
+  }
+
+  const overLimit = await api("/characters", {
+    cookie,
+    method: "POST",
+    body: { name: "Ficha extra", system: "dnd", fields: {}, notes: "" }
+  });
+  assert.equal(overLimit.response.status, 409);
+  assert.equal(overLimit.payload.error.code, "character_limit_reached");
+
+  const otherCookie = await register("Outra conta", "outra-conta@example.com");
+  const forbiddenDelete = await api(`/characters/${characterIds[0]}`, {
+    cookie: otherCookie,
+    method: "DELETE"
+  });
+  assert.equal(forbiddenDelete.response.status, 404);
+
+  const deleted = await api(`/characters/${characterIds[0]}`, { cookie, method: "DELETE" });
+  assert.equal(deleted.response.status, 204);
+  const replacement = await api("/characters", {
+    cookie,
+    method: "POST",
+    body: { name: "Ficha substituta", system: "dnd", fields: {}, notes: "" }
+  });
+  assert.equal(replacement.response.status, 201);
+});
+
 test("API protege campanhas, grava eventos atomicamente e controla vagas", async () => {
   const anonymousBootstrap = await api("/bootstrap");
   assert.equal(anonymousBootstrap.response.status, 200);
@@ -300,6 +338,12 @@ test("API protege campanhas, grava eventos atomicamente e controla vagas", async
   assert.equal(eventResult.response.status, 201);
   assert.equal(eventResult.payload.event.before, "8");
   assert.equal(eventResult.payload.event.after, "9");
+  const deleteCharacterWithHistory = await api(`/characters/${characterId}`, {
+    cookie: playerCookie,
+    method: "DELETE"
+  });
+  assert.equal(deleteCharacterWithHistory.response.status, 409);
+  assert.equal(deleteCharacterWithHistory.payload.error.code, "character_has_history");
   const activeBootstrap = await api("/bootstrap", { cookie: playerCookie });
   const activeSession = activeBootstrap.payload.sessions.find((session) => session.id === sessionId);
   assert.equal(activeSession.events.length, 7);
@@ -507,4 +551,148 @@ test("API protege campanhas, grava eventos atomicamente e controla vagas", async
   assert.equal(hiddenTable.response.status, 404);
   const health = await fetch(`${baseUrl}/api/health`);
   assert.equal(health.status, 200);
+});
+
+test("salva as seções de Ordem e registra alterações de itens somente em sessão ativa", async () => {
+  const masterCookie = await register("Mestre da seção", "secao-mestre@example.com");
+  const playerCookie = await register("Jogador da seção", "secao-jogador@example.com");
+  const outsiderCookie = await register("Pessoa externa", "secao-externa@example.com");
+  const campaignResult = await api("/campaigns", {
+    cookie: masterCookie,
+    method: "POST",
+    body: { name: "Campanha de teste", system: "ordem", description: "" }
+  });
+  assert.equal(campaignResult.response.status, 201);
+  const campaignId = campaignResult.payload.campaign.id;
+  const invitation = await api(`/campaigns/${campaignId}/members`, {
+    cookie: masterCookie,
+    method: "POST",
+    body: { email: "secao-jogador@example.com" }
+  });
+  assert.equal(invitation.response.status, 201);
+  const characterResult = await api("/characters", {
+    cookie: playerCookie,
+    method: "POST",
+    body: {
+      name: "Agente de teste",
+      system: "ordem",
+      campaignId,
+      fields: { "PV máximo": "10", "PV atual": "10" },
+      notes: ""
+    }
+  });
+  assert.equal(characterResult.response.status, 201);
+  const characterId = characterResult.payload.character.id;
+
+  const ability = await api(`/characters/${characterId}/section`, {
+    cookie: playerCookie,
+    method: "PATCH",
+    body: {
+      section: "abilities",
+      value: [{ id: "ability-1", name: "Habilidade própria", category: "Própria", description: "Criada pelo jogador." }]
+    }
+  });
+  assert.equal(ability.response.status, 200);
+  assert.equal(ability.payload.character.fields.Habilidades[0].name, "Habilidade própria");
+
+  const ritual = await api(`/characters/${characterId}/section`, {
+    cookie: playerCookie,
+    method: "PATCH",
+    body: {
+      section: "rituals",
+      value: [{ id: "ritual-1", name: "Ritual de teste", element: "Energia", circle: 1, description: "Descrição livre." }]
+    }
+  });
+  assert.equal(ritual.response.status, 200);
+  assert.equal(ritual.payload.character.fields.Rituais[0].circle, 1);
+  const invalidRitual = await api(`/characters/${characterId}/section`, {
+    cookie: playerCookie,
+    method: "PATCH",
+    body: { section: "rituals", value: [{ id: "ritual-2", name: "Ritual inválido", circle: 5 }] }
+  });
+  assert.equal(invalidRitual.response.status, 400);
+
+  const description = await api(`/characters/${characterId}/section`, {
+    cookie: playerCookie,
+    method: "PATCH",
+    body: {
+      section: "description",
+      value: {
+        notes: "Anotações do agente",
+        appearance: "Aparência",
+        personality: "Personalidade",
+        history: "Histórico",
+        objective: "Objetivo"
+      }
+    }
+  });
+  assert.equal(description.response.status, 200);
+  assert.equal(description.payload.character.notes, "Anotações do agente");
+  assert.equal(description.payload.character.fields.Histórico, "Histórico");
+
+  const inventory = {
+    prestige: 3,
+    rank: "Recruta",
+    creditLimit: "Baixo",
+    capacity: 10,
+    itemLimits: { "0": 5, I: 3, II: 1, III: 0 },
+    items: [
+      { id: "item-lanterna", name: "Lanterna", type: "geral", category: "0", quantity: 1, spaces: 1, capacityBonus: 0, description: "" },
+      { id: "item-kit", name: "Kit", type: "geral", category: "I", quantity: 1, spaces: 1, capacityBonus: 0, description: "" }
+    ]
+  };
+  const savedInventory = await api(`/characters/${characterId}/section`, {
+    cookie: playerCookie,
+    method: "PATCH",
+    body: { section: "inventory", value: inventory }
+  });
+  assert.equal(savedInventory.response.status, 200);
+  assert.deepEqual(savedInventory.payload.events, []);
+  const forbiddenInventoryEdit = await api(`/characters/${characterId}/section`, {
+    cookie: outsiderCookie,
+    method: "PATCH",
+    body: { section: "inventory", value: inventory }
+  });
+  assert.equal(forbiddenInventoryEdit.response.status, 403);
+
+  const started = await api(`/campaigns/${campaignId}/sessions`, {
+    cookie: masterCookie,
+    method: "POST",
+    body: {}
+  });
+  assert.equal(started.response.status, 201);
+  const activeInventory = {
+    ...inventory,
+    items: [
+      { ...inventory.items[0], quantity: 2 },
+      { id: "item-rifle", name: "Arma de teste", type: "arma", category: "I", quantity: 1, spaces: 2, capacityBonus: 0, damage: "1d6", description: "" }
+    ]
+  };
+  const changedInventory = await api(`/characters/${characterId}/section`, {
+    cookie: masterCookie,
+    method: "PATCH",
+    body: { section: "inventory", value: activeInventory }
+  });
+  assert.equal(changedInventory.response.status, 200);
+  assert.equal(changedInventory.payload.events.length, 3);
+  assert.deepEqual(changedInventory.payload.events.map((event) => event.after).sort(), [
+    "Adicionado: Arma de teste (x1) · arma · cat. I",
+    "Alterado: Lanterna (x2) · geral · cat. 0",
+    "Removido: Kit (x1) · geral · cat. I"
+  ].sort());
+  assert.ok(changedInventory.payload.events.every((event) => event.author === "secao-mestre@example.com"));
+
+  const finished = await api(`/sessions/${started.payload.session.id}/finish`, {
+    cookie: masterCookie,
+    method: "POST",
+    body: { summary: "Sessão de teste." }
+  });
+  assert.equal(finished.response.status, 200);
+  const afterSessionInventory = await api(`/characters/${characterId}/section`, {
+    cookie: playerCookie,
+    method: "PATCH",
+    body: { section: "inventory", value: { ...activeInventory, items: [] } }
+  });
+  assert.equal(afterSessionInventory.response.status, 200);
+  assert.deepEqual(afterSessionInventory.payload.events, []);
 });

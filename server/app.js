@@ -12,6 +12,7 @@ const cookieName = "mesa_session";
 const secureCookie = process.env.COOKIE_SECURE === "true" || process.env.NODE_ENV === "production";
 const loginAttempts = new Map();
 const allowedSystems = new Set(["dnd", "tormenta", "ordem"]);
+const maxCharactersPerUser = 15;
 const now = () => new Date().toISOString();
 const makeId = () => crypto.randomUUID();
 
@@ -234,6 +235,85 @@ function parseFields(value) {
   } catch {
     return {};
   }
+}
+
+function sectionString(value, field, maximum, required = false) {
+  if (typeof value !== "string" || value.length > maximum || (required && !value.trim())) {
+    throw apiError(400, "validation_error", `Campo inválido: ${field}.`);
+  }
+  return value.trim();
+}
+
+function sectionInteger(value, field, minimum, maximum, nullable = false) {
+  if (nullable && (value === null || value === "" || value === undefined)) return null;
+  if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
+    throw apiError(400, "validation_error", `Campo inválido: ${field}.`);
+  }
+  return value;
+}
+
+function validateSectionEntries(value, section) {
+  if (!Array.isArray(value) || value.length > 100) {
+    throw apiError(400, "validation_error", "A lista deve conter no máximo 100 registros.");
+  }
+  const ids = new Set();
+  return value.map((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw apiError(400, "validation_error", "Um dos registros da ficha é inválido.");
+    }
+    const id = sectionString(entry.id, "id", 80, true);
+    if (ids.has(id)) throw apiError(400, "validation_error", "Há identificadores repetidos na lista.");
+    ids.add(id);
+    const name = sectionString(entry.name, "name", 100, true);
+    if (section === "abilities") {
+      return {
+        id,
+        name,
+        category: sectionString(entry.category || "Própria", "category", 60),
+        description: sectionString(entry.description || "", "description", 3000)
+      };
+    }
+    if (section === "rituals") {
+      if (!Number.isSafeInteger(entry.circle) || entry.circle < 1 || entry.circle > 4) {
+        throw apiError(400, "validation_error", "O círculo do ritual deve estar entre 1 e 4.");
+      }
+      return {
+        id,
+        name,
+        element: sectionString(entry.element || "", "element", 60),
+        circle: entry.circle,
+        execution: sectionString(entry.execution || "", "execution", 80),
+        range: sectionString(entry.range || "", "range", 80),
+        target: sectionString(entry.target || "", "target", 120),
+        duration: sectionString(entry.duration || "", "duration", 80),
+        resistance: sectionString(entry.resistance || "", "resistance", 120),
+        description: sectionString(entry.description || "", "description", 3000)
+      };
+    }
+    const allowedTypes = new Set(["arma", "municao", "protecao", "geral", "amaldiçoado", "amaldicoado"]);
+    const allowedCategories = new Set(["", "0", "I", "II", "III", "IV"]);
+    if (!allowedTypes.has(entry.type) || !allowedCategories.has(entry.category || "")) {
+      throw apiError(400, "validation_error", "Tipo ou categoria de item inválido.");
+    }
+    return {
+      id,
+      name,
+      type: entry.type,
+      category: entry.category || "",
+      quantity: sectionInteger(entry.quantity, "quantity", 1, 999),
+      spaces: sectionInteger(entry.spaces, "spaces", -99, 999),
+      capacityBonus: sectionInteger(entry.capacityBonus, "capacityBonus", 0, 999),
+      damage: sectionString(entry.damage || "", "damage", 80),
+      critical: sectionString(entry.critical || "", "critical", 40),
+      range: sectionString(entry.range || "", "range", 80),
+      damageType: sectionString(entry.damageType || "", "damageType", 80),
+      ammunition: sectionString(entry.ammunition || "", "ammunition", 80),
+      compatibleWeapon: sectionString(entry.compatibleWeapon || "", "compatibleWeapon", 80),
+      defense: sectionString(entry.defense || "", "defense", 40),
+      resistance: sectionString(entry.resistance || "", "resistance", 160),
+      description: sectionString(entry.description || "", "description", 2000)
+    };
+  });
 }
 
 function serializeCharacter(row) {
@@ -520,7 +600,12 @@ app.post("/api/characters", requireUser, asyncRoute((request, response) => {
   const campaignId = request.body.campaignId || null;
   const id = makeId();
   const createdAt = now();
-  const character = database.transaction(() => {
+  const createCharacter = database.transaction(() => {
+    const ownedCharacterCount = database.prepare("SELECT COUNT(*) AS count FROM characters WHERE owner_id = ?")
+      .get(request.user.id).count;
+    if (ownedCharacterCount >= maxCharactersPerUser) {
+      throw apiError(409, "character_limit_reached", "Você já possui 15 fichas. Exclua uma ficha para criar outra.");
+    }
     if (campaignId) {
       requireCampaignMember(campaignId, request.user.id);
       const campaign = database.prepare("SELECT system FROM campaigns WHERE id = ?").get(campaignId);
@@ -532,7 +617,8 @@ app.post("/api/characters", requireUser, asyncRoute((request, response) => {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(id, request.user.id, campaignId, name, system, JSON.stringify(fields), notes, createdAt, createdAt);
     return getCharacterOr404(id);
-  })();
+  });
+  const character = createCharacter.immediate();
   response.status(201).json({ character: serializeCharacter(character) });
 }));
 
@@ -568,6 +654,21 @@ app.patch("/api/characters/:id", requireUser, asyncRoute((request, response) => 
     return getCharacterOr404(currentCharacter.id);
   })();
   response.json({ character: serializeCharacter(character) });
+}));
+
+app.delete("/api/characters/:id", requireUser, asyncRoute((request, response) => {
+  const deleteCharacter = database.transaction(() => {
+    const character = getCharacterOr404(request.params.id);
+    if (character.owner_id !== request.user.id) throw apiError(404, "not_found", "Ficha não encontrada.");
+    const hasSessionEvents = database.prepare("SELECT 1 FROM session_events WHERE character_id = ? LIMIT 1")
+      .get(character.id);
+    if (hasSessionEvents) {
+      throw apiError(409, "character_has_history", "Esta ficha possui registros de sessões e não pode ser excluída.");
+    }
+    database.prepare("DELETE FROM characters WHERE id = ? AND owner_id = ?").run(character.id, request.user.id);
+  });
+  deleteCharacter.immediate();
+  response.status(204).end();
 }));
 
 app.patch("/api/characters/:id/campaign", requireUser, asyncRoute((request, response) => {
@@ -656,6 +757,122 @@ app.patch("/api/characters/:id/resources", requireUser, asyncRoute((request, res
     WHERE session_events.id = ?
   `).get(eventId)));
   response.json({ character: serializeCharacter(getCharacterOr404(character.id)), events });
+}));
+
+app.patch("/api/characters/:id/section", requireUser, asyncRoute((request, response) => {
+  const { section, value } = request.body;
+  const eventIds = [];
+  const updatedAt = now();
+  const saveSection = database.transaction(() => {
+    const character = getCharacterOr404(request.params.id);
+    if (character.system !== "ordem") {
+      throw apiError(400, "validation_error", "Estas seções estão disponíveis apenas para fichas de Ordem Paranormal.");
+    }
+    const isOwner = character.owner_id === request.user.id;
+    const campaign = character.campaign_id ? campaignMaster(character.campaign_id) : null;
+    const isMaster = Boolean(campaign && campaign.owner_id === request.user.id
+      && isCampaignMember(character.campaign_id, request.user.id));
+    if (!isOwner && !isMaster) {
+      throw apiError(403, "forbidden", "Você não pode alterar esta ficha.");
+    }
+
+    const fields = parseFields(character.fields_json);
+    const nextFields = { ...fields };
+    let nextNotes = character.notes;
+    if (section === "abilities" || section === "rituals") {
+      const field = section === "abilities" ? "Habilidades" : "Rituais";
+      nextFields[field] = validateSectionEntries(value, section);
+    } else if (section === "description") {
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        throw apiError(400, "validation_error", "Descrição inválida.");
+      }
+      nextNotes = sectionString(value.notes, "notes", 5000);
+      for (const [input, field] of [
+        ["appearance", "Aparência"],
+        ["personality", "Personalidade"],
+        ["history", "Histórico"],
+        ["objective", "Objetivo"]
+      ]) {
+        nextFields[field] = sectionString(value[input] || "", input, 2000);
+      }
+    } else if (section === "inventory") {
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        throw apiError(400, "validation_error", "Inventário inválido.");
+      }
+      const previousInventory = fields["Inventário"] && typeof fields["Inventário"] === "object"
+        && !Array.isArray(fields["Inventário"]) ? fields["Inventário"] : {};
+      const limits = value.itemLimits && typeof value.itemLimits === "object" && !Array.isArray(value.itemLimits)
+        ? value.itemLimits : {};
+      const itemLimits = Object.fromEntries(["0", "I", "II", "III", "IV"].map((category) => [
+        category, sectionInteger(limits[category], `itemLimits.${category}`, 0, 999, true)
+      ]));
+      const nextItems = Object.hasOwn(value, "items")
+        ? validateSectionEntries(value.items, "inventory")
+        : Array.isArray(previousInventory.items) ? previousInventory.items : [];
+      const inventory = {
+        prestige: sectionInteger(value.prestige, "prestige", 0, 999999, true),
+        rank: sectionString(value.rank || "", "rank", 80),
+        creditLimit: sectionString(value.creditLimit || "", "creditLimit", 80),
+        capacity: sectionInteger(value.capacity, "capacity", 0, 9999),
+        itemLimits,
+        items: nextItems
+      };
+      nextFields["Inventário"] = inventory;
+
+      if (Object.hasOwn(value, "items") && character.campaign_id
+        && isCampaignMember(character.campaign_id, request.user.id)) {
+        const activeSession = database.prepare(
+          "SELECT id FROM game_sessions WHERE campaign_id = ? AND status = 'active'"
+        ).get(character.campaign_id);
+        if (activeSession) {
+          const previousItems = Array.isArray(previousInventory.items) ? previousInventory.items : [];
+          const previousById = new Map(previousItems.filter((item) => item && typeof item.id === "string")
+            .map((item) => [item.id, item]));
+          const nextById = new Map(nextItems.map((item) => [item.id, item]));
+          const summarize = (item) => `${item.name} (x${item.quantity}) · ${item.type}${item.category ? ` · cat. ${item.category}` : ""}`;
+          const logChange = (before, after) => {
+            const eventId = makeId();
+            database.prepare(`
+              INSERT INTO session_events (id, session_id, character_id, author_id, field_name, value_before, value_after, created_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(eventId, activeSession.id, character.id, request.user.id, "Inventário", before, after, updatedAt);
+            eventIds.push(eventId);
+          };
+          for (const item of nextItems) {
+            const previous = previousById.get(item.id);
+            if (!previous) {
+              logChange("—", `Adicionado: ${summarize(item)}`);
+            } else if (JSON.stringify(previous) !== JSON.stringify(item)) {
+              logChange(summarize(previous), `Alterado: ${summarize(item)}`);
+            }
+          }
+          for (const item of previousItems) {
+            if (item && typeof item.id === "string" && !nextById.has(item.id)) {
+              logChange(summarize(item), `Removido: ${summarize(item)}`);
+            }
+          }
+        }
+      }
+    } else {
+      throw apiError(400, "validation_error", "Seção da ficha inválida.");
+    }
+
+    if (JSON.stringify(nextFields).length > 300000) {
+      throw apiError(400, "validation_error", "Os campos da ficha excedem o limite permitido.");
+    }
+    database.prepare("UPDATE characters SET fields_json = ?, notes = ?, updated_at = ? WHERE id = ?")
+      .run(JSON.stringify(nextFields), nextNotes, updatedAt, character.id);
+    return character.id;
+  });
+  const characterId = saveSection();
+  const events = eventIds.map((eventId) => serializeEvent(database.prepare(`
+    SELECT session_events.*, characters.name AS character_name, users.email AS author_email
+    FROM session_events
+    JOIN characters ON characters.id = session_events.character_id
+    JOIN users ON users.id = session_events.author_id
+    WHERE session_events.id = ?
+  `).get(eventId)));
+  response.json({ character: serializeCharacter(getCharacterOr404(characterId)), events });
 }));
 
 app.post("/api/campaigns/:id/sessions", requireUser, asyncRoute((request, response) => {
